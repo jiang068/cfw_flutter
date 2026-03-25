@@ -18,7 +18,7 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final manager = widget.manager;
     return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 10),
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -55,6 +55,9 @@ class _HomePageState extends State<HomePage> {
                         ),
                         InkWell(
                           onTap: _showPortDialog,
+                          hoverColor: Colors.white10,
+                          splashColor: Colors.white24,
+                          borderRadius: BorderRadius.circular(4),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             child: Text(cfg['mixed-port']?.toString() ?? cfg['port']?.toString() ?? '7890', style: const TextStyle(color: Colors.white70, fontSize: _kFontSize)),
@@ -73,6 +76,9 @@ class _HomePageState extends State<HomePage> {
                       if (cfg['allow-lan'] == true)
                         InkWell(
                           onTap: _showBindAddressDialog,
+                          hoverColor: Colors.white10,
+                          splashColor: Colors.white24,
+                          borderRadius: BorderRadius.circular(4),
                           child: Padding(
                             padding: const EdgeInsets.only(right: 15),
                             child: Text('绑定地址: ${cfg['bind-address'] ?? '*'}', style: const TextStyle(color: Colors.white70, fontSize: _kFontSize)),
@@ -226,47 +232,78 @@ class _HomePageState extends State<HomePage> {
                     );
                   },
                 ),
-                _buildSettingRow('主目录', '打开文件夹', onTap: () {
-                  final profile = Platform.environment['USERPROFILE'] ?? '';
-                  Process.run('explorer.exe', ['$profile\\.config\\cfw_flutter']);
-                }),
-                const Divider(color: Colors.white10, height: 12),
-
-                _buildSettingRow('UWP 应用联网限制', '启动助手', onTap: () => SystemToolManager.openUwpLoopback()),
                 _buildSettingRow(
-                  'TAP 模式', null,
-                  customTrailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      InkWell(
-                        onTap: () => Process.run('./bin/tap-driver.exe', []),
-                        borderRadius: BorderRadius.circular(4),
-                        hoverColor: Colors.white10,
-                        child: const Padding(
-                          padding: EdgeInsets.only(right: 15, left: 8, top: 4, bottom: 4),
-                          child: Text('安装网卡', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                        ),
+                  '主目录', null,
+                  customTrailing: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () {
+                        final profile = Platform.environment['USERPROFILE'] ?? '';
+                        Process.run('explorer.exe', ['$profile\\.config\\cfw_flutter']);
+                      },
+                      hoverColor: Colors.white10,
+                      splashColor: Colors.white12,
+                      borderRadius: BorderRadius.circular(4),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        child: Text('打开文件夹', style: TextStyle(color: Colors.white70, fontSize: 15)),
                       ),
-                      Transform.scale(
-                        scale: 0.8,
-                        child: Switch(
-                          value: false,
-                          onChanged: (v) {},
-                          activeThumbColor: Colors.green,
-                          inactiveThumbColor: const Color(0xFF5A5A67),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
-                _buildSettingRow('服务模式', '管理', onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已预留 XML 注册框架，需提权写入 C 盘')));
-                }),
+                const Divider(color: Colors.white10, height: 12),
+
+                _buildSettingRow(
+                  'UWP 应用联网限制', null,
+                  customTrailing: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => SystemToolManager.openUwpLoopback(),
+                      hoverColor: Colors.white10,
+                      splashColor: Colors.white12,
+                      borderRadius: BorderRadius.circular(4),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        child: Text('启动助手', style: TextStyle(color: Colors.white70, fontSize: 15)),
+                      ),
+                    ),
+                  ),
+                ),
+                // TAP 模式已彻底移除，以消除旧有性能和交互问题
+                ValueListenableBuilder<bool>(
+                  valueListenable: manager.isServiceModeEnabled,
+                  builder: (context, isService, _) {
+                    return _buildSettingRow(
+                      '服务模式', null,
+                      titleTrailing: Padding(
+                        padding: const EdgeInsets.only(left: 6),
+                        child: Icon(Icons.public, size: 18, color: isService ? Colors.green : Colors.white24),
+                      ),
+                      customTrailing: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () => manager.toggleServiceMode(!isService),
+                          hoverColor: Colors.white10,
+                          splashColor: Colors.white12,
+                          borderRadius: BorderRadius.circular(4),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            child: Text(isService ? '卸载' : '安装', style: const TextStyle(color: Colors.white70, fontSize: 15)),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
                 _buildSettingRow(
                   'TUN 模式', null,
-                  titleTrailing: InkWell(
-                    onTap: () => _showTunConfigDialog(context),
-                    child: const Padding(padding: EdgeInsets.all(4.0), child: Icon(Icons.settings, size: 16, color: Colors.white70)),
+                  titleTrailing: IconButton(
+                    icon: const Icon(Icons.settings, size: 16, color: Colors.white54),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                    splashRadius: 16,
+                    tooltip: 'TUN 配置',
+                    onPressed: () => _showTunConfigDialog(context),
                   ),
                   isToggle: true,
                   value: cfg['tun-enable'] ?? false,
@@ -279,9 +316,13 @@ class _HomePageState extends State<HomePage> {
                   builder: (context, isMixin, _) {
                     return _buildSettingRow(
                       '混合配置', null,
-                      titleTrailing: InkWell(
-                        onTap: () => _showMixinDialog(context),
-                        child: const Padding(padding: EdgeInsets.all(4.0), child: Icon(Icons.settings, size: 16, color: Colors.white70)),
+                      titleTrailing: IconButton(
+                        icon: const Icon(Icons.settings, size: 16, color: Colors.white54),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                        splashRadius: 16,
+                        tooltip: '混合配置',
+                        onPressed: () => _showMixinDialog(context),
                       ),
                       isToggle: true,
                       value: isMixin,
@@ -442,6 +483,7 @@ class _HomePageState extends State<HomePage> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(4),
         hoverColor: Colors.white10,
+        splashColor: Colors.white24,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Text(trailingText, style: const TextStyle(color: Colors.white70, fontSize: _kFontSize)),

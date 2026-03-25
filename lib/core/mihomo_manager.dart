@@ -55,6 +55,8 @@ class MihomoManager {
   // 防火墙状态（是否允许 mihomo.exe 通过防火墙）
   final ValueNotifier<bool> isFirewallAllowed = ValueNotifier<bool>(false);
   final ValueNotifier<bool> isFirewallLoading = ValueNotifier<bool>(false);
+  // 服务模式状态（是否以任务计划方式运行）
+  final ValueNotifier<bool> isServiceModeEnabled = ValueNotifier<bool>(false);
 
   /// 启动内核（强杀旧进程 -> 启动 -> 轮询连接与初始化）
   Future<void> startMihomo({String exe = './mihomo.exe', List<String> args = const ['-f', 'config.yaml', '-d', '.']}) async {
@@ -69,6 +71,11 @@ class MihomoManager {
         isFirewallAllowed.value = await SystemToolManager.isFirewallRuleExists();
       } catch (_) {
         isFirewallAllowed.value = false;
+      }
+      try {
+        isServiceModeEnabled.value = await SystemToolManager.isServiceModeEnabled();
+      } catch (_) {
+        isServiceModeEnabled.value = false;
       }
       // 强杀残留进程
       try {
@@ -94,25 +101,22 @@ class MihomoManager {
         debugPrint('❌ 内核进程已意外退出！ exitCode: $code');
       });
 
-      // 尝试在启动后连接内核并初始化状态
-      for (int i = 0; i < 10; i++) {
-          try {
-          await Future.delayed(const Duration(seconds: 1));
-          await syncConfig();
-          // 加载本地持久化配置并再次同步到内核
-          try {
-            await _loadLocalSettings();
-            await syncConfig();
-          } catch (e) {
-            debugPrint('💾 [持久化] 加载本地配置失败或无配置: $e');
+      // 尝试在启动后连接内核并初始化状态（极速轮询，最多 ~5 秒）
+      for (int i = 0; i < 50; i++) { // 最多等 5 秒
+        try {
+          await Future.delayed(const Duration(milliseconds: 100));
+          // 用最轻量的 version 接口测试内核是否就绪
+          final res = await _dio.get('/version');
+          if (res.statusCode == 200) {
+            debugPrint('🟢 [内核] 启动就绪，耗时: ${i * 100} ms');
+            await _loadLocalSettings(); // 先将本地记忆注入内核
+            await syncConfig();         // 再同步一次状态给 UI
+            await fetchVersion();
+            await fetchProxies();
+            connectLogSocket();
+            break;
           }
-          await fetchVersion();
-          await fetchProxies();
-          connectLogSocket();
-          break;
-        } catch (e) {
-          debugPrint('启动初始化重试时出错: $e');
-        }
+        } catch (_) {}
       }
     } catch (e) {
       if (kDebugMode) print('Mihomo start failed: $e');
@@ -211,6 +215,16 @@ class MihomoManager {
     }
   }
 
+  /// 切换服务模式（使用任务计划），并刷新状态
+  Future<void> toggleServiceMode(bool enable) async {
+    try {
+      await SystemToolManager.toggleServiceMode(enable);
+      isServiceModeEnabled.value = await SystemToolManager.isServiceModeEnabled();
+    } catch (e) {
+      debugPrint('🛠️ [服务模式] 切换失败: $e');
+    }
+  }
+
   /// 获取内核版本信息
   Future<void> fetchVersion() async {
     try {
@@ -266,13 +280,12 @@ class MihomoManager {
         try {
           final json = jsonDecode(data);
           parseLog((json['type'] ?? 'info').toString(), json['payload'] ?? '');
-            } catch (e) {
-              debugPrint('log parse error: $e');
-            }
+        } catch (_) {
+          // 避免在频繁的日志回调中打印信息导致 UI/控制台阻塞
+        }
       }, onError: (e) {
-            debugPrint('log socket error: $e');
-      }, onDone: () {
-            debugPrint('log socket closed');
+        // 保留错误打印以便定位连接/协议问题
+        debugPrint('log socket error: $e');
       });
     } catch (e) {
           debugPrint('connectLogSocket failed: $e');

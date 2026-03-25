@@ -77,6 +77,71 @@ class SystemToolManager {
   // ---- 防火墙规则管理 (Windows) ----
   static const String _fwRuleName = 'CFW_Flutter_Mihomo_Core';
 
+  // ---- 服务模式 (使用任务计划) ----
+  static const String _serviceTaskName = 'CFW_Flutter_Mihomo_Service';
+
+  /// 检查服务模式是否已安装
+  static Future<bool> isServiceModeEnabled() async {
+    if (!Platform.isWindows) return false;
+    try {
+      final res = await Process.run('schtasks', ['/query', '/tn', _serviceTaskName]);
+      return res.exitCode == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 提权安装/卸载服务模式 (写入 XML 并注册)
+  static Future<bool> toggleServiceMode(bool enable) async {
+    if (!Platform.isWindows) return false;
+    try {
+      if (enable) {
+        // 生成对应当前路径的 XML
+        final exeDir = Directory.current.path;
+        final corePath = '$exeDir\\mihomo.exe';
+        final configDir = '$exeDir'; // Mihomo 工作目录
+        
+        final xmlContent = '''<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers>
+  <Principals>
+    <Principal id="Author">
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>StopExisting</MultipleInstancesPolicy>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>"$corePath"</Command>
+      <Arguments>-d "$configDir"</Arguments>
+    </Exec>
+  </Actions>
+</Task>''';
+        
+        final tempDir = Directory.systemTemp;
+        final xmlFile = File('${tempDir.path}\\cfw_service.xml');
+        await xmlFile.writeAsString(xmlContent);
+
+        // 提权执行 schtasks 创建任务
+        final args = 'schtasks /create /tn "$_serviceTaskName" /xml "${xmlFile.path}" /f';
+        await Process.run('powershell', ['-Command', 'Start-Process cmd -ArgumentList \'/c $args\' -Verb RunAs -WindowStyle Hidden']);
+      } else {
+        // 提权删除任务
+        final args = 'schtasks /delete /tn "$_serviceTaskName" /f';
+        await Process.run('powershell', ['-Command', 'Start-Process cmd -ArgumentList \'/c $args\' -Verb RunAs -WindowStyle Hidden']);
+      }
+      
+      await Future.delayed(const Duration(seconds: 2));
+      return await isServiceModeEnabled();
+    } catch (e) {
+      if (kDebugMode) debugPrint('🛠️ [服务模式] 操作失败: $e');
+      return false;
+    }
+  }
+
   /// 检查防火墙规则是否存在
   static Future<bool> isFirewallRuleExists() async {
     if (!Platform.isWindows) return false;
