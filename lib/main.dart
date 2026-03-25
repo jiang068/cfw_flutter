@@ -115,9 +115,9 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
   @override
   void onTrayIconRightMouseDown() => trayManager.popUpContextMenu();
   @override
-  void onTrayMenuItemClick(MenuItem item) {
+  void onTrayMenuItemClick(MenuItem item) async {
     if (item.key == 'show_window') onTrayIconMouseDown();
-    else if (item.key == 'exit_app') { _manager.dispose(); exit(0); }
+    else if (item.key == 'exit_app') { await _manager.dispose(); exit(0); }
   }
 
   Widget _buildSidebar() => Container(

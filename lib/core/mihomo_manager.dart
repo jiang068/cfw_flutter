@@ -45,10 +45,26 @@ class MihomoManager {
   });
   // 系统代理状态持久化（UI 可订阅）
   final ValueNotifier<bool> isSystemProxyEnabled = ValueNotifier<bool>(false);
+  // 开机自启状态（Windows）
+  final ValueNotifier<bool> isAutoStartEnabled = ValueNotifier<bool>(false);
+  // 防火墙状态（是否允许 mihomo.exe 通过防火墙）
+  final ValueNotifier<bool> isFirewallAllowed = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> isFirewallLoading = ValueNotifier<bool>(false);
 
   /// 启动内核（强杀旧进程 -> 启动 -> 轮询连接与初始化）
   Future<void> startMihomo({String exe = './mihomo.exe', List<String> args = const ['-f', 'config.yaml', '-d', '.']}) async {
     try {
+      // 初始化系统级别的状态
+      try {
+        isAutoStartEnabled.value = await SystemToolManager.isAutoStartEnabled();
+      } catch (_) {
+        isAutoStartEnabled.value = false;
+      }
+      try {
+        isFirewallAllowed.value = await SystemToolManager.isFirewallRuleExists();
+      } catch (_) {
+        isFirewallAllowed.value = false;
+      }
       // 强杀残留进程
       try {
         Process.runSync('taskkill', ['/F', '/IM', 'mihomo.exe']);
@@ -75,9 +91,16 @@ class MihomoManager {
 
       // 尝试在启动后连接内核并初始化状态
       for (int i = 0; i < 10; i++) {
-        try {
+          try {
           await Future.delayed(const Duration(seconds: 1));
           await syncConfig();
+          // 加载本地持久化配置并再次同步到内核
+          try {
+            await _loadLocalSettings();
+            await syncConfig();
+          } catch (e) {
+            debugPrint('💾 [持久化] 加载本地配置失败或无配置: $e');
+          }
           await fetchVersion();
           await fetchProxies();
           connectLogSocket();
@@ -94,10 +117,24 @@ class MihomoManager {
   /// 关闭/清理资源
   Future<void> dispose() async {
     try {
+      // 退出前强制还原系统代理
+      if (isSystemProxyEnabled.value) {
+        try {
+          await SystemToolManager.disableSystemProxy();
+          debugPrint('🧹 [清理] 退出时已还原系统代理');
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    try {
       await _logSocket?.close();
     } catch (_) {}
+
     try {
-      _mihomoProcess?.kill();
+      if (_mihomoProcess != null) {
+        Process.runSync('taskkill', ['/F', '/T', '/PID', _mihomoProcess!.pid.toString()]);
+        debugPrint('🛑 [进程管理] 已强杀 Mihomo 进程树 (PID: ${_mihomoProcess!.pid})');
+      }
     } catch (_) {}
   }
 
@@ -121,6 +158,8 @@ class MihomoManager {
         'port': currentPort,
         'allow-lan': data['allow-lan'] ?? false,
         'ipv6': data['ipv6'] ?? false,
+        'tun-enable': data['tun']?['enable'] ?? false,
+        'bind-address': data['bind-address'] ?? '*',
         'log-level': data['log-level'] ?? 'info',
         'mode': data['mode'] ?? 'rule',
       };
@@ -132,11 +171,37 @@ class MihomoManager {
 
   /// 更新某个配置项
   Future<void> updateConfig(String key, dynamic value) async {
+    debugPrint('🔧 [配置更新] 准备修改: $key -> $value');
     try {
       await _dio.patch('/configs', data: {key: value});
       await syncConfig();
+      // 持久化本地设置
+      try {
+        await _saveLocalSettings();
+      } catch (e) {
+        debugPrint('💾 [持久化] 保存失败: $e');
+      }
+      debugPrint('✅ [配置更新] 成功: $key -> $value');
     } catch (e) {
-      debugPrint('🌐 [API 请求失败] updateConfig: $e');
+      debugPrint('❌ [配置更新] 失败: $key, 错误: $e');
+      rethrow;
+    }
+  }
+
+  /// 更新 TUN 模式状态
+  Future<void> updateTunConfig(bool enable) async {
+    try {
+      await _dio.patch('/configs', data: {
+        "tun": {"enable": enable}
+      });
+      await syncConfig();
+      try {
+        await _saveLocalSettings();
+      } catch (e) {
+        debugPrint('💾 [持久化] 保存失败: $e');
+      }
+    } catch (e) {
+      debugPrint('🌐 [API 请求失败] updateTunConfig: $e');
       rethrow;
     }
   }
@@ -258,6 +323,11 @@ class MihomoManager {
       try {
         await SystemToolManager.enableSystemProxy(port);
         isSystemProxyEnabled.value = true;
+        try {
+          await _saveLocalSettings();
+        } catch (e) {
+          debugPrint('💾 [持久化] 保存失败: $e');
+        }
       } catch (e) {
         if (kDebugMode) print('enableSystemProxy failed: $e');
         isSystemProxyEnabled.value = false;
@@ -266,9 +336,107 @@ class MihomoManager {
       try {
         await SystemToolManager.disableSystemProxy();
         isSystemProxyEnabled.value = false;
+        try {
+          await _saveLocalSettings();
+        } catch (e) {
+          debugPrint('💾 [持久化] 保存失败: $e');
+        }
       } catch (e) {
         if (kDebugMode) print('disableSystemProxy failed: $e');
       }
+    }
+  }
+
+  /// 切换开机自启动
+  Future<void> toggleAutoStart(bool enable) async {
+    await SystemToolManager.setAutoStart(enable);
+    try {
+      isAutoStartEnabled.value = await SystemToolManager.isAutoStartEnabled();
+    } catch (_) {
+      isAutoStartEnabled.value = false;
+    }
+  }
+
+  /// 触发防火墙切换
+  Future<void> toggleFirewall() async {
+    isFirewallLoading.value = true;
+    try {
+      final targetState = !isFirewallAllowed.value;
+      isFirewallAllowed.value = await SystemToolManager.toggleFirewallRule(targetState);
+      debugPrint('🛡️ [防火墙] 当前状态: ${isFirewallAllowed.value}');
+    } finally {
+      isFirewallLoading.value = false;
+    }
+  }
+
+  /// 获取配置文件文本
+  Future<String> getConfigFileContent() async {
+    try {
+      final file = File('config.yaml');
+      if (await file.exists()) {
+        return await file.readAsString();
+      }
+      return '未找到 config.yaml';
+    } catch (e) {
+      return '读取配置失败: $e';
+    }
+  }
+
+  /// 调用内核 DNS 查询
+  Future<Map<String, dynamic>> queryDns(String host, String type) async {
+    try {
+      debugPrint('🌍 [DNS查询] 请求: $host, 类型: $type');
+      final res = await _dio.get('/dns/query', queryParameters: {'name': host, 'type': type});
+      return res.data;
+    } on DioException catch (e) {
+      debugPrint('🌍 [DNS查询] Dio拦截异常: ${e.response?.statusCode}');
+      if (e.response != null) {
+        try {
+          final data = e.response?.data;
+          if (data is Map && data.containsKey('message')) return {'error': data['message']};
+          return {'error': data ?? 'HTTP ${e.response?.statusCode}: 解析失败'};
+        } catch (_) {
+          return {'error': 'HTTP ${e.response?.statusCode}: 解析失败'};
+        }
+      }
+      return {'error': e.message};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  // ---- 本地配置持久化（Windows 用户目录下 .config/cfw_flutter/settings.json） ----
+  String get _settingsPath {
+    final profile = Platform.environment['USERPROFILE'] ?? '';
+    return '$profile\\.config\\cfw_flutter\\settings.json';
+  }
+
+  Future<void> _saveLocalSettings() async {
+    try {
+      final file = File(_settingsPath);
+      if (!(await file.parent.exists())) await file.parent.create(recursive: true);
+      final current = Map<String, dynamic>.from(config.value);
+      current['system-proxy'] = isSystemProxyEnabled.value;
+      await file.writeAsString(jsonEncode(current));
+    } catch (e) {
+      debugPrint('💾 [持久化] 保存失败: $e');
+    }
+  }
+
+  Future<void> _loadLocalSettings() async {
+    try {
+      final file = File(_settingsPath);
+      if (await file.exists()) {
+        final str = await file.readAsString();
+        final map = jsonDecode(str) as Map<String, dynamic>;
+        debugPrint('💾 [持久化] 读取到本地配置，准备注入...');
+        // 注入回内核内存
+        await _dio.patch('/configs', data: map);
+        // 恢复系统代理状态
+        if (map['system-proxy'] == true) await setSystemProxyEnabled(true);
+      }
+    } catch (e) {
+      debugPrint('💾 [持久化] 读取失败: $e');
     }
   }
 }
