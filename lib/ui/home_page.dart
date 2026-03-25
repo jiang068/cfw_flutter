@@ -13,11 +13,12 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  static const double _kFontSize = 15.0;
   @override
   Widget build(BuildContext context) {
     final manager = widget.manager;
     return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 10),
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -37,10 +38,11 @@ class _HomePageState extends State<HomePage> {
                 // 端口行：支持随机端口按钮（行高 36，右侧端口文本可点）
                 _HoverRow(
                   child: Container(
-                    height: 36, padding: const EdgeInsets.symmetric(horizontal: 12),
+                    height: 34, padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        const Text('端口', style: TextStyle(fontSize: 14)),
+                        const Text('端口', style: TextStyle(fontSize: _kFontSize)),
                         const Spacer(),
                         IconButton(
                           icon: const Icon(Icons.casino, size: 18, color: Colors.white54),
@@ -55,16 +57,34 @@ class _HomePageState extends State<HomePage> {
                           onTap: _showPortDialog,
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            child: Text(cfg['mixed-port']?.toString() ?? cfg['port']?.toString() ?? '7890', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                            child: Text(cfg['mixed-port']?.toString() ?? cfg['port']?.toString() ?? '7890', style: const TextStyle(color: Colors.white70, fontSize: _kFontSize)),
                           ),
                         ),
                       ],
                     ),
                   ),
                 ),
-                _buildSettingRow('允许局域网', null, isToggle: true, value: cfg['allow-lan'] ?? false, onChanged: (v) => manager.updateConfig('allow-lan', v)),
-                // 绑定地址行（当允许局域网时显示）
-                if (cfg['allow-lan'] == true) _buildSettingRow('绑定地址', cfg['bind-address'] ?? '*', onTap: _showBindAddressDialog),
+                _buildSettingRow(
+                  '允许局域网',
+                  null,
+                  customTrailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (cfg['allow-lan'] == true)
+                        InkWell(
+                          onTap: _showBindAddressDialog,
+                          child: Padding(
+                            padding: const EdgeInsets.only(right: 15),
+                            child: Text('绑定地址: ${cfg['bind-address'] ?? '*'}', style: const TextStyle(color: Colors.white70, fontSize: _kFontSize)),
+                          ),
+                        ),
+                      Transform.scale(
+                        scale: 0.8,
+                        child: Switch(value: cfg['allow-lan'] ?? false, onChanged: (v) => manager.updateConfig('allow-lan', v), activeThumbColor: Colors.green, inactiveThumbColor: const Color(0xFF5A5A67)),
+                      ),
+                    ],
+                  ),
+                ),
                 _buildSettingRow('日志级别', (cfg['log-level'] ?? 'info').toString().toUpperCase(), onTap: () {
                   _showLogLevelDialog(cfg['log-level'] ?? 'info');
                 }),
@@ -74,25 +94,32 @@ class _HomePageState extends State<HomePage> {
                   builder: (context, version, _) {
                     return _HoverRow(
                       child: Container(
-                        height: 36, padding: const EdgeInsets.symmetric(horizontal: 12),
+                        height: 34, padding: const EdgeInsets.symmetric(horizontal: 12),
                         child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            const Text('Clash 内核', style: TextStyle(fontSize: 14)),
+                            const Text('Clash 内核', style: TextStyle(fontSize: _kFontSize)),
                             const SizedBox(width: 12),
-                            // 防火墙盾牌按钮
+                            // 防火墙盾牌按钮（固定尺寸以避免状态切换抖动）
                             ValueListenableBuilder<bool>(
                               valueListenable: manager.isFirewallLoading,
                               builder: (context, isLoading, _) {
                                 return ValueListenableBuilder<bool>(
                                   valueListenable: manager.isFirewallAllowed,
                                   builder: (context, isAllowed, _) {
-                                    if (isLoading) {
-                                      return const Padding(padding: EdgeInsets.all(8.0), child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)));
-                                    }
-                                    return IconButton(
-                                      icon: Icon(isAllowed ? Icons.gpp_good : Icons.gpp_maybe, size: 18, color: isAllowed ? Colors.green : Colors.grey),
-                                      tooltip: isAllowed ? '移除防火墙规则' : '添加防火墙规则 (允许LAN)',
-                                      onPressed: () => manager.toggleFirewall(),
+                                    return SizedBox(
+                                      width: 32,
+                                      height: 32,
+                                      child: Center(
+                                        child: isLoading
+                                            ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                                            : IconButton(
+                                                padding: EdgeInsets.zero,
+                                                icon: Icon(isAllowed ? Icons.gpp_good : Icons.gpp_maybe, size: 18, color: isAllowed ? Colors.green : Colors.grey),
+                                                tooltip: isAllowed ? '移除防火墙规则' : '添加防火墙规则 (允许LAN)',
+                                                onPressed: () => manager.toggleFirewall(),
+                                              ),
+                                      ),
                                     );
                                   },
                                 );
@@ -199,23 +226,69 @@ class _HomePageState extends State<HomePage> {
                     );
                   },
                 ),
-                _buildSettingRow('主目录', '打开文件夹', onTap: () => Process.run('explorer.exe', [Directory.current.path])),
+                _buildSettingRow('主目录', '打开文件夹', onTap: () {
+                  final profile = Platform.environment['USERPROFILE'] ?? '';
+                  Process.run('explorer.exe', ['$profile\\.config\\cfw_flutter']);
+                }),
                 const Divider(color: Colors.white10, height: 12),
 
                 _buildSettingRow('UWP 应用联网限制', '启动助手', onTap: () => SystemToolManager.openUwpLoopback()),
-                _buildSettingRow('虚拟网卡安装', '安装 TAP', onTap: () => Process.run('./bin/tap-driver.exe', [])),
-                _buildSettingRow('TAP 模式', '管理', isToggle: true, value: false, onChanged: (v) {}),
+                _buildSettingRow(
+                  'TAP 模式', null,
+                  customTrailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      InkWell(
+                        onTap: () => Process.run('./bin/tap-driver.exe', []),
+                        borderRadius: BorderRadius.circular(4),
+                        hoverColor: Colors.white10,
+                        child: const Padding(
+                          padding: EdgeInsets.only(right: 15, left: 8, top: 4, bottom: 4),
+                          child: Text('安装网卡', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                        ),
+                      ),
+                      Transform.scale(
+                        scale: 0.8,
+                        child: Switch(
+                          value: false,
+                          onChanged: (v) {},
+                          activeThumbColor: Colors.green,
+                          inactiveThumbColor: const Color(0xFF5A5A67),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 _buildSettingRow('服务模式', '管理', onTap: () {
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已预留 XML 注册框架，需提权写入 C 盘')));
                 }),
                 _buildSettingRow(
-                  'TUN 模式',
-                  null,
+                  'TUN 模式', null,
+                  titleTrailing: InkWell(
+                    onTap: () => _showTunConfigDialog(context),
+                    child: const Padding(padding: EdgeInsets.all(4.0), child: Icon(Icons.settings, size: 16, color: Colors.white70)),
+                  ),
                   isToggle: true,
                   value: cfg['tun-enable'] ?? false,
                   onChanged: (v) => manager.updateTunConfig(v),
                 ),
-                _buildSettingRow('混合配置', null, isToggle: true, value: false, onTap: () {}),
+
+                // 混合配置行：带齿轮与开关
+                ValueListenableBuilder<bool>(
+                  valueListenable: manager.isMixinEnabled,
+                  builder: (context, isMixin, _) {
+                    return _buildSettingRow(
+                      '混合配置', null,
+                      titleTrailing: InkWell(
+                        onTap: () => _showMixinDialog(context),
+                        child: const Padding(padding: EdgeInsets.all(4.0), child: Icon(Icons.settings, size: 16, color: Colors.white70)),
+                      ),
+                      isToggle: true,
+                      value: isMixin,
+                      onChanged: (v) => manager.toggleMixin(v),
+                    );
+                  },
+                ),
 
                 const Divider(color: Colors.white10, height: 12),
                 // 系统代理开关：绑定到 MihomoManager.isSystemProxyEnabled
@@ -227,7 +300,7 @@ class _HomePageState extends State<HomePage> {
                         height: 36, padding: const EdgeInsets.symmetric(horizontal: 12),
                         child: Row(
                           children: [
-                            const Text('系统代理', style: TextStyle(fontSize: 14)),
+                            const Text('系统代理', style: TextStyle(fontSize: 16)),
                             const Spacer(),
                             Transform.scale(
                               scale: 0.8,
@@ -355,7 +428,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildSettingRow(String title, String? trailing, {bool isToggle = false, bool value = false, Function(bool)? onChanged, VoidCallback? onTap, Widget? customTrailing}) {
+  Widget _buildSettingRow(String title, String? trailingText, {bool isToggle = false, bool value = false, Function(bool)? onChanged, VoidCallback? onTap, Widget? customTrailing, Widget? titleTrailing}) {
     Widget trailingWidget;
     if (customTrailing != null) {
       trailingWidget = customTrailing;
@@ -364,14 +437,14 @@ class _HomePageState extends State<HomePage> {
         scale: 0.8,
         child: Switch(value: value, onChanged: onChanged, activeThumbColor: Colors.green, inactiveThumbColor: const Color(0xFF5A5A67)),
       );
-    } else if (trailing != null) {
+    } else if (trailingText != null) {
       trailingWidget = InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(4),
         hoverColor: Colors.white10,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Text(trailing, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          child: Text(trailingText, style: const TextStyle(color: Colors.white70, fontSize: _kFontSize)),
         ),
       );
     } else {
@@ -380,11 +453,14 @@ class _HomePageState extends State<HomePage> {
 
     return _HoverRow(
       child: Container(
-        height: 36,
+        height: 34,
         padding: const EdgeInsets.symmetric(horizontal: 12),
+        alignment: Alignment.center,
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Text(title, style: const TextStyle(fontSize: 14)),
+            Text(title, style: const TextStyle(fontSize: _kFontSize)),
+            if (titleTrailing != null) Padding(padding: const EdgeInsets.only(left: 6), child: titleTrailing),
             const Spacer(),
             trailingWidget,
           ],
@@ -393,6 +469,213 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+}
+
+// ---- 混合配置弹窗 ----
+extension on _HomePageState {
+  void _showMixinDialog(BuildContext context) {
+    final manager = widget.manager;
+    TextEditingController ctrl = TextEditingController(text: manager.mixinText.value);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF2C2C36),
+        title: const Text('混合配置 (YAML)', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: SizedBox(
+          width: 600,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: ctrl,
+                style: const TextStyle(color: Colors.white),
+                maxLines: 15,
+                decoration: const InputDecoration(filled: true, fillColor: Color(0xFF1E1E24), border: InputBorder.none),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消', style: TextStyle(color: Colors.grey))),
+          TextButton(onPressed: () async { await manager.saveMixinText(ctrl.text); Navigator.pop(context); }, child: const Text('保存', style: TextStyle(color: Colors.green))),
+        ],
+      ),
+    );
+  }
+
+  void _showTunConfigDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => TunConfigDialog(manager: widget.manager),
+    );
+  }
+}
+
+// ---- TunConfigDialog ----
+class TunConfigDialog extends StatefulWidget {
+  final MihomoManager manager;
+  const TunConfigDialog({Key? key, required this.manager}) : super(key: key);
+
+  @override
+  State<TunConfigDialog> createState() => _TunConfigDialogState();
+}
+
+class _TunConfigDialogState extends State<TunConfigDialog> {
+  bool dnsIpv6 = false;
+  TextEditingController dnsServersCtrl = TextEditingController();
+  TextEditingController backupDnsCtrl = TextEditingController();
+  TextEditingController defaultNsCtrl = TextEditingController();
+  TextEditingController fakeIpFiltersCtrl = TextEditingController();
+  TextEditingController domainPolicyCtrl = TextEditingController();
+  TextEditingController dnsHijackCtrl = TextEditingController();
+  String tunStack = 'system';
+  bool autoDetectIface = false;
+  static const double _kTunFont = 15.0;
+
+  @override
+  void initState() {
+    super.initState();
+    final data = widget.manager.tunAdvanced.value;
+    // PM 提供的默认值
+    const String defaultDnsServers = "114.114.114.114\n223.5.5.5\n8.8.8.8";
+    const String defaultFakeIpFilters = "+.stun.**\n+.stun.***\n+.stun.*.***\n+.stun.*****\n+.stun.playstation.net\nxbox.*.*.microsoft.com\n***.xboxlive.com\n*.msftncsi.com\n*.msftconnecttest.com\nWORKGROUP";
+    const String defaultDnsHijack = "any:53";
+    const String defaultTunStack = "gvisor";
+    try {
+      dnsIpv6 = data['dns_ipv6'] == true;
+      dnsServersCtrl.text = (data['dns_servers'] ?? defaultDnsServers).toString();
+      backupDnsCtrl.text = (data['backup_dns'] ?? '').toString();
+      defaultNsCtrl.text = (data['default_nameserver'] ?? '').toString();
+      fakeIpFiltersCtrl.text = (data['fake_ip_filters'] ?? defaultFakeIpFilters).toString();
+      domainPolicyCtrl.text = (data['domain_policy'] ?? '').toString();
+      dnsHijackCtrl.text = (data['dns_hijack'] ?? defaultDnsHijack).toString();
+      tunStack = (data['tun_stack'] ?? defaultTunStack).toString();
+      autoDetectIface = data['auto_detect_iface'] == true;
+    } catch (_) {}
+  }
+
+  String _buildYaml() {
+    final dnsServers = dnsServersCtrl.text.trim();
+    final backup = backupDnsCtrl.text.trim();
+    final fakeFilters = fakeIpFiltersCtrl.text.trim();
+    final domainPolicy = domainPolicyCtrl.text.trim();
+    final hijack = dnsHijackCtrl.text.trim();
+    return '''dns:
+  ipv6: ${dnsIpv6 ? 'true' : 'false'}
+  servers: |
+    ${dnsServers.replaceAll('\n', '\n    ')}
+  backup: |
+    ${backup.replaceAll('\n', '\n    ')}
+  default_nameserver: ${defaultNsCtrl.text}
+  fake_ip_filters: |
+    ${fakeFilters.replaceAll('\n', '\n    ')}
+  domain_policy: |
+    ${domainPolicy.replaceAll('\n', '\n    ')}
+  hijack: ${hijack}
+tun:
+  stack: ${tunStack}
+  auto_detect_interface: ${autoDetectIface ? 'true' : 'false'}
+''';
+  }
+
+  void _resetDefaults() {
+    setState(() {
+      dnsIpv6 = false;
+      dnsServersCtrl.clear();
+      backupDnsCtrl.clear();
+      defaultNsCtrl.clear();
+      fakeIpFiltersCtrl.clear();
+      domainPolicyCtrl.clear();
+      dnsHijackCtrl.clear();
+      tunStack = 'system';
+      autoDetectIface = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF2C2C36),
+      content: SizedBox(
+        width: 800, height: 500,
+        child: Column(
+          children: [
+            Expanded(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      child: ListView(
+                        children: [
+                          SwitchListTile(title: const Text('DNS IPv6', style: TextStyle(color: Colors.white, fontSize: _kTunFont)), value: dnsIpv6, onChanged: (v) => setState(() => dnsIpv6 = v)),
+                          const SizedBox(height: 8),
+                          const Text('DNS 服务器 (每行一个)', style: TextStyle(color: Colors.white70, fontSize: _kTunFont)),
+                          TextField(controller: dnsServersCtrl, maxLines: 3, style: const TextStyle(color: Colors.white, fontSize: _kTunFont), decoration: const InputDecoration(filled: true, fillColor: Color(0xFF1E1E24), border: InputBorder.none)),
+                          const SizedBox(height: 8),
+                          const Text('后备DNS 服务器', style: TextStyle(color: Colors.white70, fontSize: _kTunFont)),
+                          TextField(controller: backupDnsCtrl, maxLines: 2, style: const TextStyle(color: Colors.white, fontSize: _kTunFont), decoration: const InputDecoration(filled: true, fillColor: Color(0xFF1E1E24), border: InputBorder.none)),
+                          const SizedBox(height: 8),
+                          const Text('默认名称服务器', style: TextStyle(color: Colors.white70, fontSize: _kTunFont)),
+                          TextField(controller: defaultNsCtrl, style: const TextStyle(color: Colors.white, fontSize: _kTunFont), decoration: const InputDecoration(filled: true, fillColor: Color(0xFF1E1E24), border: InputBorder.none)),
+                          const SizedBox(height: 8),
+                          const Text('Fake IP 过滤器', style: TextStyle(color: Colors.white70, fontSize: _kTunFont)),
+                          TextField(controller: fakeIpFiltersCtrl, maxLines: 3, style: const TextStyle(color: Colors.white, fontSize: _kTunFont), decoration: const InputDecoration(filled: true, fillColor: Color(0xFF1E1E24), border: InputBorder.none)),
+                          const SizedBox(height: 8),
+                          const Text('域名服务器政策', style: TextStyle(color: Colors.white70, fontSize: _kTunFont)),
+                          TextField(controller: domainPolicyCtrl, maxLines: 2, style: const TextStyle(color: Colors.white, fontSize: _kTunFont), decoration: const InputDecoration(filled: true, fillColor: Color(0xFF1E1E24), border: InputBorder.none)),
+                          const SizedBox(height: 8),
+                          const Text('DNS 劫持', style: TextStyle(color: Colors.white70, fontSize: _kTunFont)),
+                          TextField(controller: dnsHijackCtrl, style: const TextStyle(color: Colors.white, fontSize: _kTunFont), decoration: const InputDecoration(filled: true, fillColor: Color(0xFF1E1E24), border: InputBorder.none)),
+                          const SizedBox(height: 8),
+                          const Text('TUN 栈', style: TextStyle(color: Colors.white70, fontSize: _kTunFont)),
+                          DropdownButton<String>(value: tunStack, dropdownColor: const Color(0xFF1E1E24), items: ['gvisor', 'system', 'mixed'].map((e) => DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(color: Colors.white, fontSize: _kTunFont)))).toList(), onChanged: (v) => setState(() => tunStack = v ?? 'system')),
+                          const SizedBox(height: 8),
+                          SwitchListTile(title: const Text('自动检测接口', style: TextStyle(color: Colors.white, fontSize: _kTunFont)), value: autoDetectIface, onChanged: (v) => setState(() => autoDetectIface = v)),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Container(width: 1, color: Colors.white12),
+                  Expanded(
+                    child: Container(
+                      color: const Color(0xFF1E1E24), padding: const EdgeInsets.all(12),
+                      child: SingleChildScrollView(child: SelectableText(_buildYaml(), style: const TextStyle(color: Colors.white70, fontFamily: 'Consolas'))),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(onPressed: () => _resetDefaults(), child: const Text('重置', style: TextStyle(color: Colors.orange))),
+                const SizedBox(width: 8),
+                TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消', style: TextStyle(color: Colors.grey))),
+                const SizedBox(width: 8),
+                TextButton(onPressed: () async {
+                  final map = {
+                    'dns_ipv6': dnsIpv6,
+                    'dns_servers': dnsServersCtrl.text,
+                    'backup_dns': backupDnsCtrl.text,
+                    'default_nameserver': defaultNsCtrl.text,
+                    'fake_ip_filters': fakeIpFiltersCtrl.text,
+                    'domain_policy': domainPolicyCtrl.text,
+                    'dns_hijack': dnsHijackCtrl.text,
+                    'tun_stack': tunStack,
+                    'auto_detect_iface': autoDetectIface,
+                  };
+                  await widget.manager.saveTunAdvancedConfig(map);
+                  if (context.mounted) Navigator.pop(context);
+                }, child: const Text('保存', style: TextStyle(color: Colors.green))),
+              ],
+            )
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // ---- 局部悬停高亮包装器 ----

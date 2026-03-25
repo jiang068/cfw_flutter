@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -26,16 +27,68 @@ void main(List<String> args) async {
   }
 
   await windowManager.ensureInitialized();
-  WindowOptions windowOptions = const WindowOptions(
-    size: Size(900, 650),
-    minimumSize: Size(850, 600),
-    center: true,
-    backgroundColor: Colors.transparent,
-    skipTaskbar: false,
-    titleBarStyle: TitleBarStyle.hidden,
-  );
+
+  // 读取本地 settings.json（若存在）以记忆窗口位置/大小
+  WindowOptions windowOptions;
+  double? _savedX;
+  double? _savedY;
+  try {
+    final profile = Platform.environment['USERPROFILE'] ?? '';
+    final file = File('$profile\\.config\\cfw_flutter\\settings.json');
+    if (await file.exists()) {
+      final s = await file.readAsString();
+      final map = jsonDecode(s) as Map<String, dynamic>?;
+      if (map != null && map.containsKey('window_width') && map.containsKey('window_height')) {
+        final double w = (map['window_width'] is num) ? (map['window_width'] as num).toDouble() : double.parse(map['window_width'].toString());
+        final double h = (map['window_height'] is num) ? (map['window_height'] as num).toDouble() : double.parse(map['window_height'].toString());
+        _savedX = (map['window_x'] is num) ? (map['window_x'] as num).toDouble() : double.tryParse(map['window_x']?.toString() ?? '0') ?? 0.0;
+        _savedY = (map['window_y'] is num) ? (map['window_y'] as num).toDouble() : double.tryParse(map['window_y']?.toString() ?? '0') ?? 0.0;
+        windowOptions = WindowOptions(
+          size: Size(w, h),
+          minimumSize: const Size(700, 500),
+          center: false,
+          backgroundColor: Colors.transparent,
+          skipTaskbar: false,
+          titleBarStyle: TitleBarStyle.hidden,
+        );
+      } else {
+        windowOptions = const WindowOptions(
+          size: Size(750, 600),
+          minimumSize: Size(700, 500),
+          center: true,
+          backgroundColor: Colors.transparent,
+          skipTaskbar: false,
+          titleBarStyle: TitleBarStyle.hidden,
+        );
+      }
+    } else {
+      windowOptions = const WindowOptions(
+        size: Size(750, 600),
+        minimumSize: Size(700, 500),
+        center: true,
+        backgroundColor: Colors.transparent,
+        skipTaskbar: false,
+        titleBarStyle: TitleBarStyle.hidden,
+      );
+    }
+  } catch (e) {
+    windowOptions = const WindowOptions(
+      size: Size(750, 600),
+      minimumSize: Size(700, 500),
+      center: true,
+      backgroundColor: Colors.transparent,
+      skipTaskbar: false,
+      titleBarStyle: TitleBarStyle.hidden,
+    );
+  }
 
   windowManager.waitUntilReadyToShow(windowOptions, () async {
+    // 如果读取到位置则先设置位置（避免居中覆盖）
+    try {
+      if (_savedX != null && _savedY != null) {
+        await windowManager.setPosition(Offset(_savedX, _savedY));
+      }
+    } catch (_) {}
     await windowManager.show();
     await windowManager.focus();
   });
@@ -94,6 +147,24 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
 
   @override
   void onWindowClose() async => await windowManager.hide();
+
+  @override
+  void onWindowResized() async {
+    try {
+      final size = await windowManager.getSize();
+      final pos = await windowManager.getPosition();
+      _manager.saveWindowBounds(size.width, size.height, pos.dx, pos.dy);
+    } catch (e) {}
+  }
+
+  @override
+  void onWindowMoved() async {
+    try {
+      final size = await windowManager.getSize();
+      final pos = await windowManager.getPosition();
+      _manager.saveWindowBounds(size.width, size.height, pos.dx, pos.dy);
+    } catch (e) {}
+  }
 
   Future<void> _initTray() async {
     try {

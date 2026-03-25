@@ -43,6 +43,11 @@ class MihomoManager {
     'log-level': 'info',
     'mode': 'rule',
   });
+  // 混合配置状态（可由 UI 弹窗编辑并持久化）
+  final ValueNotifier<bool> isMixinEnabled = ValueNotifier<bool>(false);
+  final ValueNotifier<String> mixinText = ValueNotifier<String>('');
+  // 高级 TUN 配置（仅本地持久化，以便 UI 可编辑/保存）
+  final ValueNotifier<Map<String, dynamic>> tunAdvanced = ValueNotifier<Map<String, dynamic>>(<String, dynamic>{});
   // 系统代理状态持久化（UI 可订阅）
   final ValueNotifier<bool> isSystemProxyEnabled = ValueNotifier<bool>(false);
   // 开机自启状态（Windows）
@@ -405,6 +410,84 @@ class MihomoManager {
     }
   }
 
+  /// 将窗口位置/大小保存到本地 settings.json
+  Future<void> saveWindowBounds(double w, double h, double x, double y) async {
+    try {
+      final file = File(_settingsPath);
+      Map<String, dynamic> map = {};
+      if (await file.exists()) {
+        try {
+          final s = await file.readAsString();
+          map = (jsonDecode(s) as Map<String, dynamic>?) ?? {};
+        } catch (_) {
+          map = {};
+        }
+      } else {
+        if (!(await file.parent.exists())) await file.parent.create(recursive: true);
+      }
+      map['window_width'] = w;
+      map['window_height'] = h;
+      map['window_x'] = x;
+      map['window_y'] = y;
+      await file.writeAsString(jsonEncode(map));
+    } catch (e) {
+      debugPrint('💾 [持久化] 保存窗口信息失败: $e');
+    }
+  }
+
+  /// 从本地 settings.json 获取窗口位置/大小（不存在时返回 null）
+  Future<Map<String, double>?> getWindowBounds() async {
+    try {
+      final file = File(_settingsPath);
+      if (!await file.exists()) return null;
+      final s = await file.readAsString();
+      final map = jsonDecode(s) as Map<String, dynamic>?;
+      if (map == null) return null;
+      if (map.containsKey('window_width') && map.containsKey('window_height')) {
+        double? w = (map['window_width'] is num) ? (map['window_width'] as num).toDouble() : double.tryParse(map['window_width'].toString());
+        double? h = (map['window_height'] is num) ? (map['window_height'] as num).toDouble() : double.tryParse(map['window_height'].toString());
+        double? x = (map['window_x'] is num) ? (map['window_x'] as num).toDouble() : double.tryParse(map['window_x']?.toString() ?? '0');
+        double? y = (map['window_y'] is num) ? (map['window_y'] as num).toDouble() : double.tryParse(map['window_y']?.toString() ?? '0');
+        if (w != null && h != null && x != null && y != null) {
+          return {'w': w, 'h': h, 'x': x, 'y': y};
+        }
+      }
+    } catch (e) {
+      debugPrint('💾 [持久化] 读取窗口信息失败: $e');
+    }
+    return null;
+  }
+
+  /// 切换混合配置开关并持久化
+  Future<void> toggleMixin(bool enable) async {
+    isMixinEnabled.value = enable;
+    try {
+      await _saveLocalSettings();
+    } catch (e) {
+      debugPrint('💾 [持久化] 保存 mixin 状态失败: $e');
+    }
+  }
+
+  /// 保存混合配置文本
+  Future<void> saveMixinText(String text) async {
+    mixinText.value = text;
+    try {
+      await _saveLocalSettings();
+    } catch (e) {
+      debugPrint('💾 [持久化] 保存 mixin 文本失败: $e');
+    }
+  }
+
+  /// 保存高级 TUN 配置到本地 settings
+  Future<void> saveTunAdvancedConfig(Map<String, dynamic> data) async {
+    tunAdvanced.value = Map<String, dynamic>.from(data);
+    try {
+      await _saveLocalSettings();
+    } catch (e) {
+      debugPrint('💾 [持久化] 保存 tun 高级配置失败: $e');
+    }
+  }
+
   // ---- 本地配置持久化（Windows 用户目录下 .config/cfw_flutter/settings.json） ----
   String get _settingsPath {
     final profile = Platform.environment['USERPROFILE'] ?? '';
@@ -417,6 +500,22 @@ class MihomoManager {
       if (!(await file.parent.exists())) await file.parent.create(recursive: true);
       final current = Map<String, dynamic>.from(config.value);
       current['system-proxy'] = isSystemProxyEnabled.value;
+      // mixin 状态
+      current['mixin_enabled'] = isMixinEnabled.value;
+      current['mixin_text'] = mixinText.value;
+      // tun 高级配置
+      current['tun_advanced'] = tunAdvanced.value;
+      // 如果已有窗口信息则合并（避免覆盖）
+      try {
+        if (await file.exists()) {
+          final s = await file.readAsString();
+          final prev = (jsonDecode(s) as Map<String, dynamic>?) ?? {};
+          // 保留 prev 的 window_* 字段（如果存在）
+          for (var k in ['window_width', 'window_height', 'window_x', 'window_y']) {
+            if (prev.containsKey(k) && !current.containsKey(k)) current[k] = prev[k];
+          }
+        }
+      } catch (_) {}
       await file.writeAsString(jsonEncode(current));
     } catch (e) {
       debugPrint('💾 [持久化] 保存失败: $e');
@@ -430,6 +529,12 @@ class MihomoManager {
         final str = await file.readAsString();
         final map = jsonDecode(str) as Map<String, dynamic>;
         debugPrint('💾 [持久化] 读取到本地配置，准备注入...');
+        // 恢复本地保存的 mixin 与 tun 高级配置到内存
+        try {
+          if (map.containsKey('mixin_enabled')) isMixinEnabled.value = map['mixin_enabled'] == true;
+          if (map.containsKey('mixin_text')) mixinText.value = (map['mixin_text'] ?? '').toString();
+          if (map.containsKey('tun_advanced') && map['tun_advanced'] is Map) tunAdvanced.value = Map<String, dynamic>.from(map['tun_advanced']);
+        } catch (_) {}
         // 注入回内核内存
         await _dio.patch('/configs', data: map);
         // 恢复系统代理状态
