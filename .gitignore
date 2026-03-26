@@ -69,3 +69,8 @@ clash.db
 *.pdb
 *.exp
 *.lib
+
+windows/
+.flutter-plugins-dependencies
+.metadata
+geoip.metadb
