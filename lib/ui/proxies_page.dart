@@ -7,94 +7,161 @@ class ProxiesPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: manager.isLoadingProxies,
-      builder: (context, loading, _) {
-        if (loading) return const Center(child: CircularProgressIndicator());
-        return ValueListenableBuilder<List<String>>(
-          valueListenable: manager.groupNames,
-          builder: (context, groups, _) {
-            if (groups.isEmpty) return const Center(child: Text('没有获取到代理组'));
-            return DefaultTabController(
-              length: groups.length,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      children: [
+        // 顶部模式切换栏
+        Container(
+          height: 60,
+          color: const Color(0xFF22222B),
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: ValueListenableBuilder<Map<String, dynamic>>(
+            valueListenable: manager.config,
+            builder: (context, config, _) {
+              final currentMode = (config['mode'] ?? 'rule').toString().toLowerCase();
+              return Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Row(
+                  _buildModeButton('全局', 'global', Icons.language, currentMode),
+                  const SizedBox(width: 10),
+                  _buildModeButton('规则', 'rule', Icons.call_split, currentMode),
+                  const SizedBox(width: 10),
+                  _buildModeButton('直连', 'direct', Icons.keyboard_double_arrow_right, currentMode),
+                  const SizedBox(width: 10),
+                  _buildModeButton('脚本', 'script', Icons.code, currentMode),
+                ],
+              );
+            },
+          ),
+        ),
+        // 底部内容区
+        Expanded(
+          child: ValueListenableBuilder<Map<String, dynamic>>(
+            valueListenable: manager.config,
+            builder: (context, config, _) {
+              final currentMode = (config['mode'] ?? 'rule').toString().toLowerCase();
+              if (currentMode == 'direct') return const Center(child: Text('所有流量都会直连', style: TextStyle(color: Colors.white54, fontSize: 16)));
+              if (currentMode == 'script') return const Center(child: Text('脚本模式 (暂未实现)', style: TextStyle(color: Colors.white54, fontSize: 16)));
+              if (currentMode == 'global') return _ProxyGroupGrid(manager: manager, groupName: 'GLOBAL'); // 独立渲染全局节点
+
+              // 规则模式：渲染多 Tab
+              return ValueListenableBuilder<List<String>>(
+                valueListenable: manager.groupNames,
+                builder: (context, groups, _) {
+                  if (groups.isEmpty) return const Center(child: Text('没有获取到代理组', style: TextStyle(color: Colors.white54)));
+                  return DefaultTabController(
+                    length: groups.length,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
                           child: TabBar(
                             isScrollable: true,
-                            indicatorColor: Colors.green,
-                            labelColor: Colors.green,
-                            unselectedLabelColor: Colors.white60,
+                            indicatorColor: Colors.green, labelColor: Colors.green, unselectedLabelColor: Colors.white60,
+                            dividerColor: Colors.transparent, // 去除下划线
                             tabs: groups.map((g) => Tab(text: g)).toList(),
                           ),
                         ),
-                        IconButton(icon: const Icon(Icons.wifi_protected_setup), tooltip: '测速', onPressed: () {}),
+                        Expanded(
+                          child: TabBarView(
+                            children: groups.map((g) => _ProxyGroupGrid(manager: manager, groupName: g)).toList(),
+                          ),
+                        ),
                       ],
                     ),
-                  ),
-                  Expanded(
-                    child: ValueListenableBuilder<Map<String, dynamic>>(
-                      valueListenable: manager.proxiesData,
-                      builder: (context, proxiesData, _) {
-                        return TabBarView(
-                          children: groups.map((groupName) {
-                            var groupData = proxiesData[groupName] ?? {};
-                            List<dynamic> allNodes = groupData['all'] ?? [];
-                            String nowSelected = groupData['now'] ?? '';
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
 
-                            return GridView.builder(
-                              padding: const EdgeInsets.all(20),
-                              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                                maxCrossAxisExtent: 200,
-                                mainAxisExtent: 65,
-                                crossAxisSpacing: 10,
-                                mainAxisSpacing: 10,
-                              ),
-                              itemCount: allNodes.length,
-                              itemBuilder: (context, index) {
-                                String nodeName = allNodes[index];
-                                var nodeData = proxiesData[nodeName];
-                                String type = nodeData != null ? nodeData['type'] : 'Unknown';
-                                bool isSelected = (nowSelected == nodeName);
+  Widget _buildModeButton(String title, String modeKey, IconData icon, String currentMode) {
+    final isSelected = currentMode == modeKey;
+    return Material(
+      color: isSelected ? const Color(0xFF3A4B3A) : const Color(0xFF383842),
+      borderRadius: BorderRadius.circular(6),
+      child: InkWell(
+        onTap: () => manager.updateConfig('mode', modeKey),
+        borderRadius: BorderRadius.circular(6),
+        hoverColor: Colors.white10,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(title, style: TextStyle(color: isSelected ? Colors.greenAccent : Colors.white70, fontSize: 14, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+              const SizedBox(width: 6),
+              Icon(icon, size: 16, color: isSelected ? Colors.greenAccent : Colors.white54),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
-                                return InkWell(
-                                  onTap: () => manager.switchProxy(groupName, nodeName),
-                                  child: Container(
-                                    padding: const EdgeInsets.all(8),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF383842),
-                                      borderRadius: BorderRadius.circular(6),
-                                      border: isSelected ? Border.all(color: Colors.green, width: 2) : null,
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Text(nodeName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: Colors.white)),
-                                        Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Text(type, style: const TextStyle(fontSize: 10, color: Colors.white54)),
-                                            const Text('ms', style: TextStyle(fontSize: 10, color: Colors.green)),
-                                          ],
-                                        )
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            );
-                          }).toList(),
-                        );
-                      },
-                    ),
-                  ),
-                ],
+class _ProxyGroupGrid extends StatelessWidget {
+  final MihomoManager manager;
+  final String groupName;
+
+  const _ProxyGroupGrid({Key? key, required this.manager, required this.groupName}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    // 局部监听 proxiesData，避免全局重绘导致滚轮重置
+    return ValueListenableBuilder<Map<String, dynamic>>(
+      valueListenable: manager.proxiesData,
+      builder: (context, proxiesData, _) {
+        final groupData = proxiesData[groupName] ?? {};
+        final List<dynamic> allNodes = groupData['all'] ?? [];
+        final String nowSelected = groupData['now'] ?? '';
+
+        if (allNodes.isEmpty) return const Center(child: Text('无节点', style: TextStyle(color: Colors.white24)));
+
+        return GridView.builder(
+          key: PageStorageKey<String>(groupName), // 核心：切换 Tab 时保留此网格的滚动位置
+          padding: const EdgeInsets.all(20),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2, // 强制 2 列
+            mainAxisExtent: 60, // 压缩节点高度
+            crossAxisSpacing: 15,
+            mainAxisSpacing: 15,
+          ),
+          itemCount: allNodes.length,
+          itemBuilder: (context, index) {
+            final nodeName = allNodes[index].toString();
+            final nodeData = proxiesData[nodeName] ?? {};
+            final type = nodeData['type'] ?? 'Unknown';
+            final isSelected = nowSelected == nodeName;
+
+            return InkWell(
+              onTap: () => manager.switchProxy(groupName, nodeName),
+              borderRadius: BorderRadius.circular(6),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isSelected ? const Color(0xFF3A4B3A) : const Color(0xFF2C2C36),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: isSelected ? Colors.green : Colors.transparent, width: 1.5),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(nodeName, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: isSelected ? Colors.greenAccent : Colors.white, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+                    const SizedBox(height: 4),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(type, style: const TextStyle(fontSize: 11, color: Colors.white54)),
+                        const Text('测速', style: TextStyle(fontSize: 11, color: Colors.white24)), // 暂留测速占位
+                      ],
+                    )
+                  ],
+                ),
               ),
             );
           },

@@ -29,10 +29,9 @@ void main(List<String> args) async {
 
   await windowManager.ensureInitialized();
 
-  // 读取本地 settings.json（若存在）以记忆窗口位置/大小
   WindowOptions windowOptions;
-  double? _savedX;
-  double? _savedY;
+  double? savedX;
+  double? savedY;
   try {
     final profile = Platform.environment['USERPROFILE'] ?? '';
     final file = File('$profile\\.config\\cfw_flutter\\settings.json');
@@ -42,8 +41,8 @@ void main(List<String> args) async {
       if (map != null && map.containsKey('window_width') && map.containsKey('window_height')) {
         final double w = (map['window_width'] is num) ? (map['window_width'] as num).toDouble() : double.parse(map['window_width'].toString());
         final double h = (map['window_height'] is num) ? (map['window_height'] as num).toDouble() : double.parse(map['window_height'].toString());
-        _savedX = (map['window_x'] is num) ? (map['window_x'] as num).toDouble() : double.tryParse(map['window_x']?.toString() ?? '0') ?? 0.0;
-        _savedY = (map['window_y'] is num) ? (map['window_y'] as num).toDouble() : double.tryParse(map['window_y']?.toString() ?? '0') ?? 0.0;
+        savedX = (map['window_x'] is num) ? (map['window_x'] as num).toDouble() : double.tryParse(map['window_x']?.toString() ?? '0') ?? 0.0;
+        savedY = (map['window_y'] is num) ? (map['window_y'] as num).toDouble() : double.tryParse(map['window_y']?.toString() ?? '0') ?? 0.0;
         windowOptions = WindowOptions(
           size: Size(w, h),
           minimumSize: const Size(700, 500),
@@ -53,41 +52,19 @@ void main(List<String> args) async {
           titleBarStyle: TitleBarStyle.hidden,
         );
       } else {
-        windowOptions = const WindowOptions(
-          size: Size(750, 600),
-          minimumSize: Size(700, 500),
-          center: true,
-          backgroundColor: Colors.transparent,
-          skipTaskbar: false,
-          titleBarStyle: TitleBarStyle.hidden,
-        );
+        windowOptions = const WindowOptions(size: Size(750, 600), minimumSize: Size(700, 500), center: true, backgroundColor: Colors.transparent, skipTaskbar: false, titleBarStyle: TitleBarStyle.hidden);
       }
     } else {
-      windowOptions = const WindowOptions(
-        size: Size(750, 600),
-        minimumSize: Size(700, 500),
-        center: true,
-        backgroundColor: Colors.transparent,
-        skipTaskbar: false,
-        titleBarStyle: TitleBarStyle.hidden,
-      );
+      windowOptions = const WindowOptions(size: Size(750, 600), minimumSize: Size(700, 500), center: true, backgroundColor: Colors.transparent, skipTaskbar: false, titleBarStyle: TitleBarStyle.hidden);
     }
   } catch (e) {
-    windowOptions = const WindowOptions(
-      size: Size(750, 600),
-      minimumSize: Size(700, 500),
-      center: true,
-      backgroundColor: Colors.transparent,
-      skipTaskbar: false,
-      titleBarStyle: TitleBarStyle.hidden,
-    );
+    windowOptions = const WindowOptions(size: Size(750, 600), minimumSize: Size(700, 500), center: true, backgroundColor: Colors.transparent, skipTaskbar: false, titleBarStyle: TitleBarStyle.hidden);
   }
 
   windowManager.waitUntilReadyToShow(windowOptions, () async {
-    // 如果读取到位置则先设置位置（避免居中覆盖）
     try {
-      if (_savedX != null && _savedY != null) {
-        await windowManager.setPosition(Offset(_savedX, _savedY));
+      if (savedX != null && savedY != null) {
+        await windowManager.setPosition(Offset(savedX, savedY));
       }
     } catch (_) {}
     await windowManager.show();
@@ -133,7 +110,6 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
     trayManager.addListener(this);
     windowManager.setPreventClose(true);
     _initTray();
-    // 启动内核并初始化数据
     _manager.startMihomo();
   }
 
@@ -155,7 +131,7 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
       final size = await windowManager.getSize();
       final pos = await windowManager.getPosition();
       _manager.saveWindowBounds(size.width, size.height, pos.dx, pos.dy);
-    } catch (e) {}
+    } catch (_) {}
   }
 
   @override
@@ -164,7 +140,7 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
       final size = await windowManager.getSize();
       final pos = await windowManager.getPosition();
       _manager.saveWindowBounds(size.width, size.height, pos.dx, pos.dy);
-    } catch (e) {}
+    } catch (_) {}
   }
 
   Future<void> _initTray() async {
@@ -196,7 +172,43 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
     width: 180, color: const Color(0xFF22222B),
     child: Column(
       children: [
-        Container(height: 90, alignment: Alignment.center, child: const Text('网速面板 (待对接)', style: TextStyle(color: Colors.white54))),
+        // 核心修复：移除 height 限制，用 padding 自适应，防止溢出
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 20),
+          alignment: Alignment.center,
+          child: ValueListenableBuilder<String>(
+            valueListenable: _manager.upSpeed,
+            builder: (context, up, _) {
+              return ValueListenableBuilder<String>(
+                valueListenable: _manager.downSpeed,
+                builder: (context, down, _) {
+                  return Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.arrow_upward, color: Colors.greenAccent, size: 16),
+                          const SizedBox(width: 8),
+                          SizedBox(width: 80, child: Text(up, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.bold))),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.arrow_downward, color: Colors.blueAccent, size: 16),
+                          const SizedBox(width: 8),
+                          SizedBox(width: 80, child: Text(down, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.blueAccent, fontSize: 13, fontWeight: FontWeight.bold))),
+                        ],
+                      ),
+                    ],
+                  );
+                }
+              );
+            }
+          ),
+        ),
         _buildNavItem('主页', 0), _buildNavItem('代理', 1), _buildNavItem('配置', 2), _buildNavItem('日志', 3),
         const Spacer(),
         Container(height: 80, alignment: Alignment.center, child: const Text('01 : 21 : 27\n● 已连接', textAlign: TextAlign.center, style: TextStyle(color: Colors.green))),

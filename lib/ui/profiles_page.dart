@@ -19,6 +19,71 @@ class _ProfilesPageState extends State<ProfilesPage> {
     widget.manager.loadProfiles();
   }
 
+  Widget _buildTopButton(String text, VoidCallback onPressed) {
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFF383842),
+        minimumSize: Size.zero,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+      ),
+      child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 13)),
+    );
+  }
+
+  void _showNewProfileDialog(BuildContext context) {
+    final nameCtrl = TextEditingController();
+    final contentCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF2C2C36),
+        title: const Text('新建配置文件', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: SizedBox(
+          width: 600,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(hintText: '配置名称 (如: my_proxy)', hintStyle: TextStyle(color: Colors.white24), filled: true, fillColor: Color(0xFF1E1E24), border: InputBorder.none),
+              ),
+              const SizedBox(height: 10),
+              Expanded(
+                child: TextField(
+                  controller: contentCtrl,
+                  maxLines: 20,
+                  style: const TextStyle(color: Colors.white, fontFamily: 'Consolas', fontSize: 13),
+                  decoration: const InputDecoration(hintText: '在此粘贴 YAML 配置内容...', hintStyle: TextStyle(color: Colors.white24), filled: true, fillColor: Color(0xFF1E1E24), border: InputBorder.none),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消', style: TextStyle(color: Colors.grey))),
+          TextButton(
+            onPressed: () async {
+              if (nameCtrl.text.isEmpty || contentCtrl.text.isEmpty) return;
+              try {
+                await widget.manager.createNewProfile(nameCtrl.text, contentCtrl.text);
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('创建并应用成功'), backgroundColor: Colors.green));
+                }
+              } catch (e) {
+                if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString()), backgroundColor: Colors.red));
+              }
+            },
+            child: const Text('保存并应用', style: TextStyle(color: Colors.green)),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _handleSwitch(File file) async {
     try {
       await widget.manager.switchProfile(file);
@@ -42,72 +107,70 @@ class _ProfilesPageState extends State<ProfilesPage> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // 顶部操作栏 (拆分为两行以防止溢出)
+        // 顶部操作栏 (单行极致压缩)
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+          padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
           color: const Color(0xFF22222B),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             children: [
-              // 第一行：URL 输入与下载
-              Row(
-                children: [
-                  const Text('从URL下载', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: SizedBox(
-                      height: 32,
-                      child: TextField(
-                        controller: _urlCtrl,
-                        style: const TextStyle(color: Colors.white, fontSize: 13),
-                        textAlignVertical: TextAlignVertical.center, // 居中对齐
-                        decoration: const InputDecoration(
-                          isDense: true, // 开启紧凑模式，修复无法点击的 Bug
-                          filled: true, fillColor: Color(0xFF1E1E24),
-                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8), // 调整内边距
-                          border: OutlineInputBorder(borderSide: BorderSide.none),
-                        ),
-                      ),
+              Expanded(
+                flex: 3,
+                child: SizedBox(
+                  height: 32,
+                  child: TextField(
+                    controller: _urlCtrl,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    textAlignVertical: TextAlignVertical.center,
+                    decoration: const InputDecoration(
+                      hintText: '输入配置订阅 URL...',
+                      hintStyle: TextStyle(color: Colors.white24),
+                      isDense: true,
+                      filled: true, fillColor: Color(0xFF1E1E24),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      border: OutlineInputBorder(borderSide: BorderSide.none),
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.copy, size: 16, color: Colors.white54), 
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                    onPressed: () {},
-                  ),
-                  const SizedBox(width: 5),
-                  ElevatedButton(
-                    onPressed: () {}, 
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF383842), minimumSize: const Size(60, 32)), 
-                    child: const Text('下载', style: TextStyle(color: Colors.white))
-                  ),
-                ],
+                ),
               ),
-              const SizedBox(height: 10), // 两行之间的间距
-              // 第二行：其它操作按钮
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  ElevatedButton(
-                    onPressed: () {}, 
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF383842), minimumSize: const Size(60, 32)), 
-                    child: const Text('更新全部', style: TextStyle(color: Colors.white))
-                  ),
-                  const SizedBox(width: 10),
-                  ElevatedButton(
-                    onPressed: () {}, 
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF383842), minimumSize: const Size(60, 32)), 
-                    child: const Text('导入', style: TextStyle(color: Colors.white))
-                  ),
-                  const SizedBox(width: 10),
-                  ElevatedButton(
-                    onPressed: () {}, 
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF383842), minimumSize: const Size(60, 32)), 
-                    child: const Text('新建配置', style: TextStyle(color: Colors.white))
-                  ),
-                ],
-              ),
+              const SizedBox(width: 5),
+              _buildTopButton('下载', () async {
+                if (_urlCtrl.text.isEmpty) return;
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('正在下载...'), duration: Duration(seconds: 1)));
+                try {
+                  await widget.manager.downloadProfile(_urlCtrl.text);
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('下载并应用成功'), backgroundColor: Colors.green));
+                    _urlCtrl.clear();
+                  }
+                } catch (e) {
+                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString()), backgroundColor: Colors.red));
+                }
+              }),
+              const SizedBox(width: 5),
+              _buildTopButton('更新全部', () async {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('正在更新所有配置...'), duration: Duration(seconds: 1)));
+                try {
+                  await widget.manager.updateAllProfiles();
+                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('全部更新完成'), backgroundColor: Colors.green));
+                } catch (e) {
+                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString()), backgroundColor: Colors.red));
+                }
+              }),
+              const SizedBox(width: 5),
+              _buildTopButton('导入', () async {
+                try {
+                  await widget.manager.importProfile();
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('导入并应用成功'), backgroundColor: Colors.green));
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString()), backgroundColor: Colors.red));
+                  }
+                }
+              }),
+              const SizedBox(width: 5),
+              _buildTopButton('新建配置', () => _showNewProfileDialog(context)),
             ],
           ),
         ),

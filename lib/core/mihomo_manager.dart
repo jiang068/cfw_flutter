@@ -5,7 +5,9 @@ import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:file_picker/file_picker.dart';
 import 'system_tool_manager.dart';
+
 
 /// 简化并净化后的 Mihomo 管理器 - 纯逻辑层，无 UI 依赖
 class LogItem {
@@ -30,6 +32,7 @@ class MihomoManager {
   late final Dio _dio;
   Process? _mihomoProcess;
   WebSocket? _logSocket;
+  WebSocket? _trafficSocket;
 
   // 状态通知器（UI 层通过 ValueListenableBuilder 订阅）
   final ValueNotifier<bool> isLoadingProxies = ValueNotifier<bool>(false);
@@ -62,6 +65,46 @@ class MihomoManager {
   // 配置文件列表状态
   final ValueNotifier<List<File>> profiles = ValueNotifier<List<File>>([]);
   final ValueNotifier<String> activeProfilePath = ValueNotifier<String>('');
+  
+  // 外部下载请求使用的独立 Dio
+  final Dio _extDio = Dio();
+
+  // 网速状态
+  final ValueNotifier<String> upSpeed = ValueNotifier<String>('0 B/s');
+  final ValueNotifier<String> downSpeed = ValueNotifier<String>('0 B/s');
+
+  String get _homeDir {
+    final profile = Platform.environment['USERPROFILE'] ?? '';
+    return '$profile\\.config\\cfw_flutter';
+  }
+
+  String get _runningConfigPath {
+    return '$_homeDir\\config.yaml';
+  }
+
+  Future<void> _ensureCoreResources() async {
+    final List<String> resourceFiles = ['geoip.metadb', 'geosite.dat', 'Country.mmdb'];
+    final exeDir = Directory.current.path; // 程序运行目录
+
+    for (var fileName in resourceFiles) {
+      final targetFile = File('$_homeDir\\$fileName');
+      if (!await targetFile.exists()) {
+        // 尝试从程序根目录或 bin 目录查找并拷贝
+        File sourceFile = File('$exeDir\\$fileName');
+        if (!await sourceFile.exists()) {
+          sourceFile = File('$exeDir\\bin\\$fileName');
+        }
+
+        if (await sourceFile.exists()) {
+          debugPrint('🚚 [资源初始化] 正在拷贝 $fileName 到 Home 目录...');
+          if (!(await targetFile.parent.exists())) await targetFile.parent.create(recursive: true);
+          await sourceFile.copy(targetFile.path);
+        } else {
+          debugPrint('⚠️ [资源警告] 未能找到基础资源 $fileName，内核可能尝试自行下载。');
+        }
+      }
+    }
+  }
 
   /// 启动内核（强杀旧进程 -> 启动 -> 轮询连接与初始化）
   /// 启动内核（强杀旧进程 -> 兜底配置 -> 启动 -> 轮询连接与初始化）
@@ -93,7 +136,14 @@ class MihomoManager {
       // ==========================================
       // 核心修复：保底配置文件生成逻辑（简化，交由命令行参数接管 external-controller/secret）
       // ==========================================
-      final configFile = File('config.yaml');
+      // 1. 确保 Home 目录存在
+      final homeDirectory = Directory(_homeDir);
+      if (!await homeDirectory.exists()) {
+        await homeDirectory.create(recursive: true);
+      }
+
+      // 2. 将保底配置写入 Home 目录
+      final configFile = File(_runningConfigPath);
       if (!await configFile.exists()) {
         debugPrint('⚠️ [内核守护] 未检测到 config.yaml，正在生成默认保底配置...');
         // 注意：这里的多行字符串必须绝对顶格，否则 YAML 解析会因为缩进报错而导致内核忽略配置！
@@ -114,7 +164,7 @@ proxy-groups: []
 rules:
   - MATCH,DIRECT
 ''';
-        await configFile.writeAsString(fallbackConfig);
+        await configFile.writeAsString(fallbackConfig, flush: true);
       }
 
       // 1. 动态生成安全的 API 端口和 Secret
@@ -127,9 +177,14 @@ rules:
       _dio.options.headers['Authorization'] = 'Bearer $apiSecret';
 
       // 3. 强制注入命令行参数（覆盖 yaml 中的控制端口）
+      // 3. 修改安全启动参数：指定 -d 为 Home 目录，-f 为 Home 目录下的 config.yaml
+      // 3. 确保基础资源文件（GeoIP等）已到位
+      await _ensureCoreResources();
+
+      // 4. 修改安全启动参数：指定 -d 为 Home 目录，-f 为 Home 目录下的 config.yaml
       final safeArgs = [
-        '-f', 'config.yaml',
-        '-d', '.',
+        '-d', _homeDir,
+        '-f', _runningConfigPath,
         '-ext-ctl', '127.0.0.1:$apiPort',
         '-secret', apiSecret,
       ];
@@ -171,6 +226,12 @@ rules:
               debugPrint('📂 [配置管理] 启动加载 profiles 失败: $e');
             }
             connectLogSocket();
+                  // 连接流量 WebSocket（实时上/下行）
+                  try {
+                    await connectTrafficSocket();
+                  } catch (e) {
+                    debugPrint('📡 [流量] 连接失败: $e');
+                  }
             break;
           }
         } catch (_) {}
@@ -196,6 +257,10 @@ rules:
       await _logSocket?.close();
     } catch (_) {}
 
+    try {
+      await _trafficSocket?.close();
+    } catch (_) {}
+    
     try {
       if (_mihomoProcess != null) {
         Process.runSync('taskkill', ['/F', '/T', '/PID', _mihomoProcess!.pid.toString()]);
@@ -240,40 +305,158 @@ rules:
     return '$profile\\.config\\cfw_flutter\\profiles';
   }
 
+  String get _profileUrlsPath {
+    final profile = Platform.environment['USERPROFILE'] ?? '';
+    return '$profile\\.config\\cfw_flutter\\profile_urls.json';
+  }
+
+  /// 从 URL 下载并应用配置
+  Future<void> downloadProfile(String url) async {
+    if (url.isEmpty || !url.startsWith('http')) throw Exception('无效的 URL');
+    try {
+      final res = await _extDio.get(url);
+      final content = res.data.toString();
+      // 用时间戳生成文件名
+      final filename = 'profile_${DateTime.now().millisecondsSinceEpoch}.yaml';
+      final file = File('$_profilesDir\\$filename');
+      if (!(await file.parent.exists())) await file.parent.create(recursive: true);
+      await file.writeAsString(content);
+
+      // 保存 URL 映射记录以便后续更新
+      final urlMapFile = File(_profileUrlsPath);
+      Map<String, dynamic> urls = {};
+      if (await urlMapFile.exists()) urls = jsonDecode(await urlMapFile.readAsString());
+      urls[file.absolute.path] = url;
+      if (!(await urlMapFile.parent.exists())) await urlMapFile.parent.create(recursive: true);
+      await urlMapFile.writeAsString(jsonEncode(urls));
+
+      await loadProfiles();
+      await switchProfile(file);
+    } catch (e) {
+      throw Exception('下载失败: $e');
+    }
+  }
+
+  // 核心修复 3：接入原生的 FilePicker
+  Future<void> importProfile() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['yaml', 'yml'],
+      );
+
+      if (result != null && result.files.single.path != null) {
+        final sourceFile = File(result.files.single.path!);
+        final filename = sourceFile.path.split(Platform.pathSeparator).last;
+        final dir = Directory(_profilesDir);
+        if (!await dir.exists()) await dir.create(recursive: true);
+        final targetFile = File('${dir.path}\\$filename');
+
+        await sourceFile.copy(targetFile.path);
+        debugPrint('📂 [配置管理] 成功导入文件: $filename');
+
+        await loadProfiles();
+        await switchProfile(targetFile);
+      }
+    } catch (e) {
+      throw Exception('导入文件失败: $e');
+    }
+  }
+
+  /// 更新所有从 URL 下载的配置
+  Future<void> updateAllProfiles() async {
+    final urlMapFile = File(_profileUrlsPath);
+    if (!await urlMapFile.exists()) return;
+    try {
+      final urls = jsonDecode(await urlMapFile.readAsString()) as Map<String, dynamic>;
+      for (var entry in urls.entries) {
+        final path = entry.key;
+        final url = entry.value;
+        if (File(path).existsSync()) {
+          debugPrint('🔄 [配置更新] 正在更新: $path');
+          final res = await _extDio.get(url);
+          await File(path).writeAsString(res.data.toString());
+        }
+      }
+      // 如果当前正在使用某配置，重新触发重载
+      if (activeProfilePath.value.isNotEmpty) {
+        await switchProfile(File(activeProfilePath.value));
+      }
+    } catch (e) {
+      throw Exception('更新全部失败: $e');
+    }
+  }
+
+  /// 新建并保存本地配置
+  Future<void> createNewProfile(String name, String content) async {
+    final dir = Directory(_profilesDir);
+    if (!await dir.exists()) await dir.create(recursive: true); // 确保目录存在
+
+    final safeName = name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final file = File('${dir.path}\\$safeName.yaml');
+
+    // flush: true 强制立刻刷入 Windows 磁盘，防止 loadProfiles 读不到
+    await file.writeAsString(content, flush: true);
+    // 等待文件系统稳定（Windows 上可能需要短暂延迟释放句柄）
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    await loadProfiles();
+    await switchProfile(file);
+  }
+
   /// 加载本地配置文件列表
   Future<void> loadProfiles() async {
     try {
       final dir = Directory(_profilesDir);
       if (!await dir.exists()) await dir.create(recursive: true);
-      final files = dir.listSync().whereType<File>().where((f) => f.path.endsWith('.yaml') || f.path.endsWith('.yml')).toList();
 
-      // 核心修复：将默认的 config.yaml 插入到列表首位
-      final defaultConfig = File('config.yaml');
+      final List<File> files = [];
+      final defaultConfig = File(_runningConfigPath);
       if (await defaultConfig.exists()) {
-        // 避免重复插入，如果目录中已有同名文件则也插入（列表以路径区分）
-        files.insert(0, defaultConfig);
+        files.add(defaultConfig);
       }
 
-      profiles.value = files;
+      final localFiles = dir.listSync().whereType<File>().where((f) => f.path.endsWith('.yaml') || f.path.endsWith('.yml')).toList();
+      files.addAll(localFiles);
+
+      // 核心修复：强制切断引用，确保 ValueNotifier 必定触发 UI 重绘
+      profiles.value = [];
+      await Future.delayed(const Duration(milliseconds: 50)); // 给予 UI 线程响应清空状态的极短间隙
+      profiles.value = List<File>.from(files);
+
+      debugPrint('📂 [配置管理] 成功加载 ${files.length} 个配置文件');
+
+      if (activeProfilePath.value.isEmpty && defaultConfig.existsSync()) {
+        activeProfilePath.value = defaultConfig.absolute.path;
+      }
     } catch (e) {
       debugPrint('📂 [配置管理] 加载列表失败: $e');
     }
   }
 
-  /// 切换并热重载配置文件
   Future<void> switchProfile(File file) async {
     debugPrint('📂 [配置管理] 尝试切换配置: ${file.path}');
     try {
-      // 告诉内核重载指定的配置文件 (force: false 意味着格式错误会拒绝加载)
-      await _dio.put('/configs', queryParameters: {'force': 'false'}, data: {'path': file.absolute.path});
+      final content = await file.readAsString();
+      
+      // 覆写到 Home 目录的 config.yaml
+      final runningConfig = File(_runningConfigPath);
+      if (!(await runningConfig.parent.exists())) await runningConfig.parent.create(recursive: true);
+      await runningConfig.writeAsString(content, flush: true);
+
+      // 内核现在的工作目录已经是 Home 目录，所以传入绝对路径或文件名均可，这里传绝对路径最稳
+      final absolutePath = runningConfig.absolute.path;
+      await _dio.put('/configs', queryParameters: {'force': 'false'}, data: {'path': absolutePath});
+      
       activeProfilePath.value = file.absolute.path;
       await syncConfig();
-      await fetchProxies(); // 重新拉取节点
-      debugPrint('✅ [配置管理] 切换成功');
+      await fetchProxies();
+      debugPrint('✅ [配置管理] 切换并覆写 config.yaml 成功');
     } on DioException catch (e) {
-      // 如果格式错误，内核会返回 400
       final errorMsg = e.response?.data?['message'] ?? e.message ?? '未知语法错误';
       throw Exception('配置文件格式有误，内核拒绝加载:\n$errorMsg');
+    } catch (e) {
+      throw Exception('文件读取或覆盖失败: $e');
     }
   }
 
@@ -349,10 +532,9 @@ rules:
       List<String> groups = [];
       allProxies.forEach((key, value) {
         if (value is Map && (value['type'] == 'Selector' || value['type'] == 'URLTest' || value['type'] == 'Fallback')) {
-          if (key != 'GLOBAL') groups.add(key);
+          if (key != 'GLOBAL') groups.add(key); // 剔除 GLOBAL
         }
       });
-      if (allProxies.containsKey('GLOBAL')) groups.insert(0, 'GLOBAL');
 
       proxiesData.value = allProxies;
       groupNames.value = groups;
@@ -392,6 +574,30 @@ rules:
       });
     } catch (e) {
           debugPrint('connectLogSocket failed: $e');
+    }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes == 0) return '0 B/s';
+    if (bytes < 1024) return bytes.toString() + ' B/s';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toStringAsFixed(1) + ' KB/s';
+    return (bytes / (1024 * 1024)).toStringAsFixed(2) + ' MB/s';
+  }
+
+  Future<void> connectTrafficSocket() async {
+    try {
+      final baseUrl = _dio.options.baseUrl.replaceFirst('http', 'ws');
+      final secret = _dio.options.headers['Authorization']?.replaceAll('Bearer ', '') ?? '';
+      _trafficSocket = await WebSocket.connect('$baseUrl/traffic?token=$secret');
+      _trafficSocket!.listen((data) {
+        try {
+          final json = jsonDecode(data);
+          upSpeed.value = _formatBytes(json['up'] ?? 0);
+          downSpeed.value = _formatBytes(json['down'] ?? 0);
+        } catch (_) {}
+      }, onError: (_) {}, onDone: () {});
+    } catch (e) {
+      debugPrint('Traffic socket error: $e');
     }
   }
 
@@ -493,7 +699,7 @@ rules:
   /// 获取配置文件文本
   Future<String> getConfigFileContent() async {
     try {
-      final file = File('config.yaml');
+      final file = File(_runningConfigPath);
       if (await file.exists()) {
         return await file.readAsString();
       }

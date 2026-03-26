@@ -96,10 +96,11 @@ class SystemToolManager {
     if (!Platform.isWindows) return false;
     try {
       if (enable) {
-        // 生成对应当前路径的 XML
+        // 生成对应用户目录下的 XML（将工作目录迁移到 %USERPROFILE%\.config\cfw_flutter）
+        final profileDir = Platform.environment['USERPROFILE'] ?? '';
+        final configDir = '$profileDir\\.config\\cfw_flutter';
         final exeDir = Directory.current.path;
         final corePath = '$exeDir\\mihomo.exe';
-        final configDir = '$exeDir'; // Mihomo 工作目录
         
         final xmlContent = '''<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -116,7 +117,7 @@ class SystemToolManager {
   <Actions Context="Author">
     <Exec>
       <Command>"$corePath"</Command>
-      <Arguments>-d "$configDir"</Arguments>
+      <Arguments>-d "$configDir" -f "$configDir\\config.yaml"</Arguments>
     </Exec>
   </Actions>
 </Task>''';
