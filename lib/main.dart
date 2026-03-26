@@ -10,6 +10,7 @@ import 'core/mihomo_manager.dart';
 import 'ui/home_page.dart';
 import 'ui/proxies_page.dart';
 import 'ui/logs_page.dart';
+import 'ui/profiles_page.dart';
 
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -249,7 +250,7 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
                     children: [
                       HomePage(manager: _manager),
                       ProxiesPage(manager: _manager),
-                      const Center(child: Text('配置管理')),
+                      ProfilesPage(manager: _manager),
                       LogsPage(manager: _manager),
                     ],
                   ),

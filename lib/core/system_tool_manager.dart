@@ -5,8 +5,8 @@ import 'package:flutter/foundation.dart';
 class SystemToolManager {
   /// 启用系统代理，使用 CFW 标准的绕过局域网参数
   static Future<ProcessResult> enableSystemProxy(int port) async {
-    // 如果传入的端口无效，强制回退到默认的 7890 端口
-    int safePort = (port <= 0) ? 7890 : port;
+    // 如果传入的端口无效，强制回退到默认的 7891 端口
+    int safePort = (port <= 0) ? 7891 : port;
     final addr = '127.0.0.1:$safePort';
     final args = ['global', addr, 'localhost;127.*;10.*;172.16.*;192.168.*;<local>'];
     try {

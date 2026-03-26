@@ -60,7 +60,7 @@ class _HomePageState extends State<HomePage> {
                           borderRadius: BorderRadius.circular(4),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            child: Text(cfg['mixed-port']?.toString() ?? cfg['port']?.toString() ?? '7890', style: const TextStyle(color: Colors.white70, fontSize: _kFontSize)),
+                            child: Text(cfg['mixed-port']?.toString() ?? cfg['port']?.toString() ?? '7891', style: const TextStyle(color: Colors.white70, fontSize: _kFontSize)),
                           ),
                         ),
                       ],
@@ -378,7 +378,7 @@ class _HomePageState extends State<HomePage> {
 
   void _showPortDialog() {
     final manager = widget.manager;
-    TextEditingController ctrl = TextEditingController(text: manager.config.value['mixed-port']?.toString() ?? manager.config.value['port']?.toString() ?? '7890');
+    TextEditingController ctrl = TextEditingController(text: manager.config.value['mixed-port']?.toString() ?? manager.config.value['port']?.toString() ?? '7891');
     showDialog(
       context: context,
       builder: (context) => AlertDialog(

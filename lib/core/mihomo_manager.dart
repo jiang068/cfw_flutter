@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -37,7 +38,7 @@ class MihomoManager {
   final ValueNotifier<List<LogItem>> logs = ValueNotifier<List<LogItem>>(<LogItem>[]);
   final ValueNotifier<String> coreVersion = ValueNotifier<String>('Unknown');
   final ValueNotifier<Map<String, dynamic>> config = ValueNotifier<Map<String, dynamic>>(<String, dynamic>{
-    'port': 7890,
+    'port': 7891,
     'allow-lan': false,
     'ipv6': false,
     'log-level': 'info',
@@ -57,8 +58,13 @@ class MihomoManager {
   final ValueNotifier<bool> isFirewallLoading = ValueNotifier<bool>(false);
   // 服务模式状态（是否以任务计划方式运行）
   final ValueNotifier<bool> isServiceModeEnabled = ValueNotifier<bool>(false);
+  
+  // 配置文件列表状态
+  final ValueNotifier<List<File>> profiles = ValueNotifier<List<File>>([]);
+  final ValueNotifier<String> activeProfilePath = ValueNotifier<String>('');
 
   /// 启动内核（强杀旧进程 -> 启动 -> 轮询连接与初始化）
+  /// 启动内核（强杀旧进程 -> 兜底配置 -> 启动 -> 轮询连接与初始化）
   Future<void> startMihomo({String exe = './mihomo.exe', List<String> args = const ['-f', 'config.yaml', '-d', '.']}) async {
     try {
       // 初始化系统级别的状态
@@ -77,13 +83,58 @@ class MihomoManager {
       } catch (_) {
         isServiceModeEnabled.value = false;
       }
+      
       // 强杀残留进程
       try {
         Process.runSync('taskkill', ['/F', '/IM', 'mihomo.exe']);
       } catch (_) {}
       await Future.delayed(const Duration(milliseconds: 500));
 
-      _mihomoProcess = await Process.start(exe, args, runInShell: false);
+      // ==========================================
+      // 核心修复：保底配置文件生成逻辑（简化，交由命令行参数接管 external-controller/secret）
+      // ==========================================
+      final configFile = File('config.yaml');
+      if (!await configFile.exists()) {
+        debugPrint('⚠️ [内核守护] 未检测到 config.yaml，正在生成默认保底配置...');
+        // 注意：这里的多行字符串必须绝对顶格，否则 YAML 解析会因为缩进报错而导致内核忽略配置！
+        const fallbackConfig = '''mixed-port: 7891
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  nameserver:
+    - 114.114.114.114
+    - 223.5.5.5
+    - 8.8.8.8
+proxies: []
+proxy-groups: []
+rules:
+  - MATCH,DIRECT
+''';
+        await configFile.writeAsString(fallbackConfig);
+      }
+
+      // 1. 动态生成安全的 API 端口和 Secret
+      final random = Random();
+      final apiPort = 50000 + random.nextInt(9000); // 50000 - 58999
+      final apiSecret = List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+
+      // 2. 重新配置 Dio 实例
+      _dio.options.baseUrl = 'http://127.0.0.1:$apiPort';
+      _dio.options.headers['Authorization'] = 'Bearer $apiSecret';
+
+      // 3. 强制注入命令行参数（覆盖 yaml 中的控制端口）
+      final safeArgs = [
+        '-f', 'config.yaml',
+        '-d', '.',
+        '-ext-ctl', '127.0.0.1:$apiPort',
+        '-secret', apiSecret,
+      ];
+
+      _mihomoProcess = await Process.start(exe, safeArgs, runInShell: false);
 
       // 监听内核 stdout/stderr 输出，便于排查
       try {
@@ -113,13 +164,19 @@ class MihomoManager {
             await syncConfig();         // 再同步一次状态给 UI
             await fetchVersion();
             await fetchProxies();
+            // 启动时加载本地配置文件列表
+            try {
+              await loadProfiles();
+            } catch (e) {
+              debugPrint('📂 [配置管理] 启动加载 profiles 失败: $e');
+            }
             connectLogSocket();
             break;
           }
         } catch (_) {}
       }
     } catch (e) {
-      if (kDebugMode) print('Mihomo start failed: $e');
+      if (kDebugMode) debugPrint('Mihomo start failed: $e');
     }
   }
 
@@ -152,16 +209,16 @@ class MihomoManager {
     try {
       final res = await _dio.get('/configs');
       final data = res.data;
-      // 优先使用 mixed-port，如果为 0 或 null，再使用 port，保底为 7890
-      int currentPort = 7890;
+      // 优先使用 mixed-port，如果为 0 或 null，再使用 port，保底为 7891
+      int currentPort = 7891;
       try {
-        currentPort = (data['mixed-port'] ?? data['port'] ?? 7890) is int
-            ? (data['mixed-port'] ?? data['port'] ?? 7890)
-            : int.parse((data['mixed-port'] ?? data['port'] ?? 7890).toString());
+        currentPort = (data['mixed-port'] ?? data['port'] ?? 7891) is int
+            ? (data['mixed-port'] ?? data['port'] ?? 7891)
+            : int.parse((data['mixed-port'] ?? data['port'] ?? 7891).toString());
       } catch (_) {
-        currentPort = 7890;
+        currentPort = 7891;
       }
-      if (currentPort == 0) currentPort = 7890;
+      if (currentPort == 0) currentPort = 7891;
 
       config.value = {
         'port': currentPort,
@@ -178,7 +235,49 @@ class MihomoManager {
     }
   }
 
-  /// 更新某个配置项
+  String get _profilesDir {
+    final profile = Platform.environment['USERPROFILE'] ?? '';
+    return '$profile\\.config\\cfw_flutter\\profiles';
+  }
+
+  /// 加载本地配置文件列表
+  Future<void> loadProfiles() async {
+    try {
+      final dir = Directory(_profilesDir);
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final files = dir.listSync().whereType<File>().where((f) => f.path.endsWith('.yaml') || f.path.endsWith('.yml')).toList();
+
+      // 核心修复：将默认的 config.yaml 插入到列表首位
+      final defaultConfig = File('config.yaml');
+      if (await defaultConfig.exists()) {
+        // 避免重复插入，如果目录中已有同名文件则也插入（列表以路径区分）
+        files.insert(0, defaultConfig);
+      }
+
+      profiles.value = files;
+    } catch (e) {
+      debugPrint('📂 [配置管理] 加载列表失败: $e');
+    }
+  }
+
+  /// 切换并热重载配置文件
+  Future<void> switchProfile(File file) async {
+    debugPrint('📂 [配置管理] 尝试切换配置: ${file.path}');
+    try {
+      // 告诉内核重载指定的配置文件 (force: false 意味着格式错误会拒绝加载)
+      await _dio.put('/configs', queryParameters: {'force': 'false'}, data: {'path': file.absolute.path});
+      activeProfilePath.value = file.absolute.path;
+      await syncConfig();
+      await fetchProxies(); // 重新拉取节点
+      debugPrint('✅ [配置管理] 切换成功');
+    } on DioException catch (e) {
+      // 如果格式错误，内核会返回 400
+      final errorMsg = e.response?.data?['message'] ?? e.message ?? '未知语法错误';
+      throw Exception('配置文件格式有误，内核拒绝加载:\n$errorMsg');
+    }
+  }
+
+/// 更新某个配置项
   Future<void> updateConfig(String key, dynamic value) async {
     debugPrint('🔧 [配置更新] 准备修改: $key -> $value');
     try {
@@ -192,13 +291,14 @@ class MihomoManager {
       }
       debugPrint('✅ [配置更新] 成功: $key -> $value');
     } catch (e) {
-      debugPrint('❌ [配置更新] 失败: $key, 错误: $e');
-      rethrow;
+      // ⚠️ 删除了 rethrow; 防止 UI 崩溃
+      debugPrint('❌ [配置更新] 失败: $key, 错误: $e (内核可能未启动)');
     }
   }
 
   /// 更新 TUN 模式状态
   Future<void> updateTunConfig(bool enable) async {
+    debugPrint('🔧 [TUN更新] 准备修改: enable -> $enable');
     try {
       await _dio.patch('/configs', data: {
         "tun": {"enable": enable}
@@ -209,9 +309,10 @@ class MihomoManager {
       } catch (e) {
         debugPrint('💾 [持久化] 保存失败: $e');
       }
+      debugPrint('✅ [TUN更新] 成功');
     } catch (e) {
-      debugPrint('🌐 [API 请求失败] updateTunConfig: $e');
-      rethrow;
+      // ⚠️ 删除了 rethrow; 防止 UI 崩溃
+      debugPrint('❌ [TUN更新] 失败: 错误: $e (内核可能未启动)');
     }
   }
 
@@ -275,7 +376,9 @@ class MihomoManager {
   /// 建立 WebSocket 日志连接，收到消息后调用 parseLog
   Future<void> connectLogSocket() async {
     try {
-      _logSocket = await WebSocket.connect('ws://127.0.0.1:9090/logs?level=info');
+      final baseUrl = _dio.options.baseUrl.replaceFirst('http', 'ws');
+      final secret = _dio.options.headers['Authorization']?.replaceAll('Bearer ', '') ?? '';
+      _logSocket = await WebSocket.connect('$baseUrl/logs?level=info&token=$secret');
       _logSocket!.listen((data) {
         try {
           final json = jsonDecode(data);
@@ -336,7 +439,7 @@ class MihomoManager {
 
   /// 设置/切换系统代理（会调用 SystemToolManager）
   Future<void> setSystemProxyEnabled(bool enabled) async {
-    final port = config.value['port'] ?? 7890;
+    final port = config.value['port'] ?? 7891;
     if (enabled) {
       try {
         await SystemToolManager.enableSystemProxy(port);
