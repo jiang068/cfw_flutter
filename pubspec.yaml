@@ -10,12 +10,18 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  
+  # 窗口与托盘管理
   window_manager: ^0.3.9
   tray_manager: ^0.2.2
   windows_single_instance: ^1.1.0
+  
+  # 网络请求 (解决 Dio 报错)
   dio: ^5.4.1
-  url_launcher: ^6.2.5
   web_socket_channel: ^2.4.0
+  url_launcher: ^6.2.5
+  
+  # 文件选择 (解决 FilePicker 报错)
   file_picker: ^8.0.7
 
 dev_dependencies:
@@ -26,4 +32,8 @@ flutter:
   uses-material-design: true
   assets:
     - assets/
-
+  # 注册本地 Emoji 字体
+  fonts:
+    - family: TwemojiMozilla
+      fonts:
+        - asset: assets/fonts/TwemojiMozilla.ttf

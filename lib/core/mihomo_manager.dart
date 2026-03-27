@@ -76,8 +76,10 @@ class MihomoManager {
   final ValueNotifier<List<File>> profiles = ValueNotifier<List<File>>([]);
   final ValueNotifier<String> activeProfilePath = ValueNotifier<String>('');
   
-  // 外部下载请求使用的独立 Dio
-  final Dio _extDio = Dio();
+  // 外部下载请求使用的独立 Dio，伪装 User-Agent 强迫机场下发 YAML 配置
+  final Dio _extDio = Dio(BaseOptions(
+    headers: {'User-Agent': 'ClashforWindows/0.20.39'}
+  ));
 
   // 网速状态
   final ValueNotifier<String> upSpeed = ValueNotifier<String>('0 B/s');
@@ -335,33 +337,6 @@ rules:
     return '$profile\\.config\\cfw_flutter\\profile_urls.json';
   }
 
-  /// 从 URL 下载并应用配置
-  Future<void> downloadProfile(String url) async {
-    if (url.isEmpty || !url.startsWith('http')) throw Exception('无效的 URL');
-    try {
-      final res = await _extDio.get(url);
-      final content = res.data.toString();
-      // 用时间戳生成文件名
-      final filename = 'profile_${DateTime.now().millisecondsSinceEpoch}.yaml';
-      final file = File('$_profilesDir\\$filename');
-      if (!(await file.parent.exists())) await file.parent.create(recursive: true);
-      await file.writeAsString(content);
-
-      // 保存 URL 映射记录以便后续更新
-      final urlMapFile = File(_profileUrlsPath);
-      Map<String, dynamic> urls = {};
-      if (await urlMapFile.exists()) urls = jsonDecode(await urlMapFile.readAsString());
-      urls[file.absolute.path] = url;
-      if (!(await urlMapFile.parent.exists())) await urlMapFile.parent.create(recursive: true);
-      await urlMapFile.writeAsString(jsonEncode(urls));
-
-      await loadProfiles();
-      await switchProfile(file);
-    } catch (e) {
-      throw Exception('下载失败: $e');
-    }
-  }
-
   // 核心修复 3：接入原生的 FilePicker
   Future<void> importProfile() async {
     try {
@@ -387,6 +362,180 @@ rules:
       throw Exception('导入文件失败: $e');
     }
   }
+  // ==========================================
+  // 智能配置嗅探与下载引擎
+  // ==========================================
+
+  /// 核心嗅探器：使用多套战术轮询，直到获取到真正的 YAML 配置
+  Future<Response> _smartFetchYaml(String url) async {
+    // 定义多套伪装战术（适配市面上 99.9% 的机场面板与高级协议）
+    final strategies = [
+      // 战术1：Clash Verge Rev 现代伪装 (首选！直接告诉服务器我支持 Meta/Mihomo 高级特性，不要给我过滤节点)
+      {'ua': 'clash-verge/v1.7.7', 'suffix': ''},
+      // 战术2：Clash Meta 原生伪装 + 参数 (部分新面板专属)
+      {'ua': 'clash.meta', 'suffix': 'flag=meta'},
+      // 战术3：纯净原版 CFW 伪装 (专治死板的老旧机场，只认老大哥)
+      {'ua': 'ClashforWindows/0.20.39', 'suffix': ''},
+      // 战术4：V2Board 强制 flag 伪装 (不认 UA，必须带参数才下发 YAML 的面板，如之前的肥猫云)
+      {'ua': 'clash', 'suffix': 'flag=clash'},
+      // 战术5：Subconverter 通用转换伪装 (终极兜底，强迫后端走万能转换逻辑)
+      {'ua': 'ClashforWindows/0.20.39', 'suffix': 'target=clash'},
+    ];
+
+    Response? lastResponse;
+    for (var s in strategies) {
+      String targetUrl = url;
+      if (s['suffix']!.isNotEmpty) {
+        // 智能拼接参数，防止 URL 损坏
+        targetUrl += (targetUrl.contains('?') ? '&' : '?') + s['suffix']!;
+      }
+
+      try {
+        debugPrint('🌐 [智能嗅探] 尝试战术 -> UA: ${s['ua']}, URL: $targetUrl');
+        final res = await _extDio.get(
+          targetUrl,
+          options: Options(
+            headers: {
+              'User-Agent': s['ua'],
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            },
+            validateStatus: (status) => true, 
+          ),
+        );
+
+        if (res.statusCode == 200) {
+          final contentLower = res.data.toString().toLowerCase();
+          // 判断是否拿到了 YAML 格式的配置 (必须包含 proxies 等关键字)
+          if (contentLower.contains('proxies:') || contentLower.contains('proxy-groups:')) {
+            debugPrint('✅ [智能嗅探] 战术成功！命中 UA: ${s['ua']}');
+            return res;
+          }
+        }
+        lastResponse = res;
+      } catch (e) {
+        debugPrint('⚠️ [智能嗅探] 战术失败: $e');
+      }
+    }
+
+    throw Exception('智能解析失败。服务器可能拒绝连接或返回了无法识别的纯 Base64。\n最后一次状态码: ${lastResponse?.statusCode}');
+  }
+
+  /// 提取 HTTP 头部隐藏的配置信息并打包成注释
+  String _extractHeadersAsComments(Headers headers, String fallbackName) {
+    String profileName = fallbackName;
+    final cdList = headers['content-disposition'] ?? <String>[];
+    if (cdList.isNotEmpty) {
+      final cd = cdList.first;
+      final utf8Match = RegExp(r"filename\s*\*=\s*UTF-8''([^;]+)", caseSensitive: false).firstMatch(cd);
+      if (utf8Match != null) {
+        profileName = Uri.decodeComponent(utf8Match.group(1)!);
+      } else {
+        final nameMatch = RegExp(r'filename="([^"]+)"', caseSensitive: false).firstMatch(cd);
+        if (nameMatch != null) profileName = Uri.decodeComponent(nameMatch.group(1)!);
+      }
+    }
+    profileName = profileName.replaceAll('.yaml', '').replaceAll('.yml', '');
+
+    String upload = '', download = '', total = '', expire = '';
+    final subInfoList = headers['subscription-userinfo'] ?? <String>[];
+    if (subInfoList.isNotEmpty) {
+      final subInfo = subInfoList.first;
+      final uMatch = RegExp(r'upload=(\d+)').firstMatch(subInfo);
+      if (uMatch != null) upload = uMatch.group(1)!;
+      final dMatch = RegExp(r'download=(\d+)').firstMatch(subInfo);
+      if (dMatch != null) download = dMatch.group(1)!;
+      final tMatch = RegExp(r'total=(\d+)').firstMatch(subInfo);
+      if (tMatch != null) total = tMatch.group(1)!;
+      final eMatch = RegExp(r'expire=(\d+)').firstMatch(subInfo);
+      if (eMatch != null) expire = eMatch.group(1)!;
+    }
+
+    String injectedHeaders = '';
+    if (profileName.isNotEmpty) injectedHeaders += '# name: $profileName\n';
+    if (upload.isNotEmpty) injectedHeaders += '# upload: $upload\n';
+    if (download.isNotEmpty) injectedHeaders += '# download: $download\n';
+    if (total.isNotEmpty) injectedHeaders += '# total: $total\n';
+    if (expire.isNotEmpty) injectedHeaders += '# expire: $expire\n';
+
+    return injectedHeaders;
+  }
+
+  /// 从 URL 下载并应用配置
+  Future<void> downloadProfile(String rawUrl) async {
+    String url = rawUrl.trim();
+    String extractedName = '';
+
+    // 1. 自动解析 clash:// 链接，提取真实 URL 和附带的名称
+    if (url.startsWith('clash://install-config')) {
+      final urlMatch = RegExp(r'url=([^&]+)').firstMatch(url);
+      if (urlMatch != null) url = Uri.decodeComponent(urlMatch.group(1)!);
+
+      final nameMatch = RegExp(r'name=([^&]+)').firstMatch(rawUrl);
+      if (nameMatch != null) extractedName = Uri.decodeComponent(nameMatch.group(1)!);
+    }
+
+    if (url.isEmpty || !url.startsWith('http')) throw Exception('无效的 URL 或协议');
+    
+    try {
+      // 使用智能嗅探器获取响应
+      final res = await _smartFetchYaml(url);
+      String content = res.data.toString();
+
+      // 提取头部并注入
+      String injectedHeaders = _extractHeadersAsComments(res.headers, extractedName);
+      if (injectedHeaders.isNotEmpty) content = injectedHeaders + content;
+
+      final filename = 'profile_${DateTime.now().millisecondsSinceEpoch}.yaml';
+      final file = File('$_profilesDir\\$filename');
+      if (!(await file.parent.exists())) await file.parent.create(recursive: true);
+      await file.writeAsString(content);
+
+      // 保存完整的原始链接以便更新
+      final urlMapFile = File(_profileUrlsPath);
+      Map<String, dynamic> urls = {};
+      if (await urlMapFile.exists()) urls = jsonDecode(await urlMapFile.readAsString());
+      urls[file.absolute.path] = rawUrl.trim(); 
+      if (!(await urlMapFile.parent.exists())) await urlMapFile.parent.create(recursive: true);
+      await urlMapFile.writeAsString(jsonEncode(urls));
+
+      await loadProfiles();
+      await switchProfile(file);
+    } catch (e) {
+      throw Exception(e.toString());
+    }
+  }
+
+  /// 单独更新某一个配置文件
+  Future<void> updateSingleProfile(File file, String rawUrl) async {
+    String url = rawUrl.trim();
+    String extractedName = '';
+
+    if (url.startsWith('clash://install-config')) {
+      final urlMatch = RegExp(r'url=([^&]+)').firstMatch(url);
+      if (urlMatch != null) url = Uri.decodeComponent(urlMatch.group(1)!);
+
+      final nameMatch = RegExp(r'name=([^&]+)').firstMatch(rawUrl);
+      if (nameMatch != null) extractedName = Uri.decodeComponent(nameMatch.group(1)!);
+    }
+    
+    try {
+      // 同样使用智能嗅探器更新
+      final res = await _smartFetchYaml(url);
+      String content = res.data.toString();
+
+      String injectedHeaders = _extractHeadersAsComments(res.headers, extractedName);
+      if (injectedHeaders.isNotEmpty) content = injectedHeaders + content;
+
+      await file.writeAsString(content);
+      await loadProfiles();
+
+      if (activeProfilePath.value == file.absolute.path) {
+        await switchProfile(file);
+      }
+    } catch (e) {
+      throw Exception('更新失败: $e');
+    }
+  }
 
   /// 更新所有从 URL 下载的配置
   Future<void> updateAllProfiles() async {
@@ -398,14 +547,10 @@ rules:
         final path = entry.key;
         final url = entry.value;
         if (File(path).existsSync()) {
-          debugPrint('🔄 [配置更新] 正在更新: $path');
-          final res = await _extDio.get(url);
-          await File(path).writeAsString(res.data.toString());
+          debugPrint('🔄 [配置更新] 正在智能更新: $path');
+          // 复用单次更新逻辑，自动走智能嗅探
+          await updateSingleProfile(File(path), url);
         }
-      }
-      // 如果当前正在使用某配置，重新触发重载
-      if (activeProfilePath.value.isNotEmpty) {
-        await switchProfile(File(activeProfilePath.value));
       }
     } catch (e) {
       throw Exception('更新全部失败: $e');
@@ -444,9 +589,10 @@ rules:
       final localFiles = dir.listSync().whereType<File>().where((f) => f.path.endsWith('.yaml') || f.path.endsWith('.yml')).toList();
       files.addAll(localFiles);
 
-      // 核心修复：强制切断引用，确保 ValueNotifier 必定触发 UI 重绘
-      profiles.value = [];
-      await Future.delayed(const Duration(milliseconds: 50)); // 给予 UI 线程响应清空状态的极短间隙
+      // ===============================================
+      // 核心修复：移除导致闪烁的暴力清空逻辑
+      // 直接赋予新的 List 对象，触发 UI 无缝平滑重绘！
+      // ===============================================
       profiles.value = List<File>.from(files);
 
       debugPrint('📂 [配置管理] 成功加载 ${files.length} 个配置文件');
@@ -462,12 +608,26 @@ rules:
   Future<void> switchProfile(File file) async {
     debugPrint('📂 [配置管理] 尝试切换配置: ${file.path}');
     try {
-      // 核心修复：不再覆写 config.yaml，直接将选中的绝对路径传给内核
+      // 1. 切换前：把我们主页 UI 里用户自己设定的核心参数先存起来
+      final currentPort = config.value['port'] ?? 7891;
+      final currentAllowLan = config.value['allow-lan'] ?? false;
+      final currentMode = config.value['mode'] ?? 'rule';
+
+      // 2. 让内核加载机场下载的 YAML
       final absolutePath = file.absolute.path;
       await _dio.put('/configs', queryParameters: {'force': 'false'}, data: {'path': absolutePath});
       
+      // 3. 核心修复：加载完立刻拍回用户的本地设置！无视机场在 YAML 里写的 port/allow-lan
+      final overrideData = {
+        'port': currentPort,
+        'mixed-port': currentPort, // 统一使用我们的端口
+        'allow-lan': currentAllowLan,
+        'mode': currentMode,
+      };
+      await _dio.patch('/configs', data: overrideData);
+
       activeProfilePath.value = absolutePath;
-      await syncConfig();
+      await syncConfig(); // 此时同步回来的状态就完美保持了用户的设置
       await fetchProxies();
       
       // 持久化当前选中的路径
@@ -476,9 +636,8 @@ rules:
       } catch (e) {
         debugPrint('💾 [持久化] 保存当前配置路径失败: $e');
       }
-      debugPrint('✅ [配置管理] 切换成功: $absolutePath');
+      debugPrint('✅ [配置管理] 切换并覆写本地设置成功: $absolutePath');
     } on DioException catch (e) {
-      // 如果配置有语法错误，内核会报错。此时强行回退到默认的 config.yaml
       debugPrint('❌ [配置管理] 切换失败，正在回退到默认配置...');
       activeProfilePath.value = _runningConfigPath;
       try {
@@ -932,6 +1091,94 @@ rules:
       }
     } catch (e) {
       debugPrint('💾 [持久化] 读取失败: $e');
+    }
+  }
+  // ==========================================
+  // 测速相关功能
+  // ==========================================
+
+  /// 测试单个节点延迟
+  Future<void> testProxyDelay(String proxyName) async {
+    final timeout = config.value['test_timeout'] ?? 3000;
+    var url = config.value['test_url']?.toString() ?? '';
+    if (url.isEmpty) url = 'http://www.gstatic.com/generate_204';
+
+    try {
+      final res = await _dio.get('/proxies/${Uri.encodeComponent(proxyName)}/delay', queryParameters: {
+        'timeout': timeout,
+        'url': url,
+      });
+      // 成功测速
+      final delay = res.data['delay'] ?? 0;
+      _updateProxyDelayLocally(proxyName, delay);
+    } catch (e) {
+      // 测速超时或失败，传入 0 作为超时标识
+      _updateProxyDelayLocally(proxyName, 0); 
+    }
+  }
+
+  /// 依次测试代理组内所有节点（使用并发限制，解决延迟虚高）
+  Future<void> testGroupDelay(String groupName) async {
+    final groupData = proxiesData.value[groupName];
+    if (groupData == null) return;
+    
+    final List<dynamic> allNodes = groupData['all'] ?? [];
+    
+    // 核心修复：控制并发数为 5，避免几百个请求同时堵塞导致延迟虚高
+    const int concurrency = 5;
+    for (int i = 0; i < allNodes.length; i += concurrency) {
+      final chunk = allNodes.sublist(i, min(i + concurrency, allNodes.length));
+      // 等待这 5 个节点测完，再测下一批
+      await Future.wait(chunk.map((nodeName) => testProxyDelay(nodeName.toString())));
+    }
+  }
+
+  /// 本地更新 proxiesData 的延迟数据以触发 UI 刷新
+  void _updateProxyDelayLocally(String proxyName, int delay) {
+    final currentData = Map<String, dynamic>.from(proxiesData.value);
+    if (currentData.containsKey(proxyName)) {
+      final proxyNode = Map<String, dynamic>.from(currentData[proxyName]);
+      List history = List.from(proxyNode['history'] ?? []);
+      
+      // 追加新的历史记录，delay 0 代表超时
+      history.add({
+        'time': DateTime.now().toUtc().toIso8601String(),
+        'delay': delay
+      });
+      
+      proxyNode['history'] = history;
+      currentData[proxyName] = proxyNode;
+      proxiesData.value = currentData; 
+    }
+  }
+  // ==========================================
+  // 单个配置操作 (更新、删除)
+  // ==========================================
+
+  /// 删除配置文件
+  Future<void> deleteProfile(File file) async {
+    if (await file.exists()) {
+      await file.delete();
+    }
+    
+    // 清除 url_map 里的记录
+    final urlMapFile = File(_profileUrlsPath);
+    if (await urlMapFile.exists()) {
+      try {
+        Map<String, dynamic> urls = jsonDecode(await urlMapFile.readAsString());
+        urls.remove(file.absolute.path);
+        await urlMapFile.writeAsString(jsonEncode(urls));
+      } catch (_) {}
+    }
+
+    await loadProfiles();
+    
+    // 如果删除的是当前正激活的文件，退回到默认配置
+    if (activeProfilePath.value == file.absolute.path) {
+      final defaultConfig = File(_runningConfigPath);
+      if (await defaultConfig.exists()) {
+        await switchProfile(defaultConfig);
+      }
     }
   }
 }

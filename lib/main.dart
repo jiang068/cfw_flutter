@@ -11,6 +11,7 @@ import 'ui/home_page.dart';
 import 'ui/proxies_page.dart';
 import 'ui/logs_page.dart';
 import 'ui/profiles_page.dart';
+import 'ui/settings_page.dart';
 
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -82,7 +83,13 @@ class CFWFlutterApp extends StatelessWidget {
       darkTheme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF282832),
+        // 主字体依然是雅黑，负责正常的中文和英文
         fontFamily: 'Microsoft YaHei',
+        // 遇到特殊 Emoji（如国旗），按顺序回退寻找
+        fontFamilyFallback: const [
+          'TwemojiMozilla', // 第一顺位：使用你导入的完整版 Emoji
+          'Segoe UI Emoji', // 第二顺位：Windows 系统默认 Emoji 兜底
+        ],
       ),
       home: const MainLayout(),
     );
@@ -235,6 +242,7 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
         _buildNavItem('代理', 1),
         _buildNavItem('配置', 2),
         _buildNavItem('日志', 3),
+        _buildNavItem('设置', 4),
         const Spacer(),
         Container(
           height: 80,
@@ -302,6 +310,7 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
                       ProxiesPage(manager: _manager),
                       ProfilesPage(manager: _manager),
                       LogsPage(manager: _manager),
+                      SettingsPage(manager: _manager),
                     ],
                   ),
                 ),

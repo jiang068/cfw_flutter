@@ -40,7 +40,7 @@ class ProxiesPage extends StatelessWidget {
               final currentMode = (config['mode'] ?? 'rule').toString().toLowerCase();
               if (currentMode == 'direct') return const Center(child: Text('所有流量都会直连', style: TextStyle(color: Colors.white54, fontSize: 16)));
               if (currentMode == 'script') return const Center(child: Text('脚本模式 (暂未实现)', style: TextStyle(color: Colors.white54, fontSize: 16)));
-              if (currentMode == 'global') return _CollapsibleProxyGroup(manager: manager, groupName: 'GLOBAL'); // 独立渲染全局节点
+              if (currentMode == 'global') return _CollapsibleProxyGroup(manager: manager, groupName: 'GLOBAL'); 
 
               // 规则模式：流式布局，按组折叠
               return ValueListenableBuilder<List<String>>(
@@ -48,7 +48,7 @@ class ProxiesPage extends StatelessWidget {
                 builder: (context, groups, _) {
                   if (groups.isEmpty) return const Center(child: Text('没有获取到代理组', style: TextStyle(color: Colors.white54)));
                   return ListView.builder(
-                    key: const PageStorageKey<String>('proxies_rule_list_scroll'), // 核心：记忆规则模式的滚动位置
+                    key: const PageStorageKey<String>('proxies_rule_list_scroll'), 
                     padding: const EdgeInsets.all(20),
                     itemCount: groups.length,
                     itemBuilder: (context, index) {
@@ -111,7 +111,7 @@ class _CollapsibleProxyGroup extends StatelessWidget {
           valueListenable: manager.getGroupCollapseState(groupName),
             builder: (context, isCollapsed, _) {
             return Container(
-              margin: const EdgeInsets.only(bottom: 3), // 核心修改：大幅压缩组与组之间的间距
+              margin: const EdgeInsets.only(bottom: 3),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -146,6 +146,16 @@ class _CollapsibleProxyGroup extends StatelessWidget {
                               const Spacer(),
                             ],
 
+                            // CFW 风格的测速按钮
+                            IconButton(
+                              icon: const Icon(Icons.network_ping, size: 18, color: Colors.white54),
+                              tooltip: '组测速',
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+                              splashRadius: 16,
+                              onPressed: () => manager.testGroupDelay(groupName),
+                            ),
+
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(color: const Color(0xFF383842), borderRadius: BorderRadius.circular(4)),
@@ -156,15 +166,15 @@ class _CollapsibleProxyGroup extends StatelessWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 2), // 核心修改：压缩标题和下方网格之间的间距
+                  const SizedBox(height: 2),
                   // 节点网格区
                   if (!isCollapsed)
                     GridView.builder(
-                      shrinkWrap: true, // 核心：允许嵌套在 ListView 中
-                      physics: const NeverScrollableScrollPhysics(), // 禁掉自身滚动，交由外层 ListView 统一滚动
+                      shrinkWrap: true, 
+                      physics: const NeverScrollableScrollPhysics(), 
                       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2, // 强制 2 列
-                        mainAxisExtent: 60, // 节点高度
+                        crossAxisCount: 2, 
+                        mainAxisExtent: 60, 
                         crossAxisSpacing: 15,
                         mainAxisSpacing: 15,
                       ),
@@ -175,11 +185,42 @@ class _CollapsibleProxyGroup extends StatelessWidget {
                         final nodeType = nodeData['type'] ?? 'Unknown';
                         final isSelected = nowSelected == nodeName;
 
+                        // 动态获取历史延迟数据
+                        final history = nodeData['history'] as List<dynamic>?;
+                        bool isTested = false;
+                        int delay = 0;
+
+                        if (history != null && history.isNotEmpty) {
+                          isTested = true;
+                          delay = history.last['delay'] ?? 0;
+                        } else if (nodeData.containsKey('delay')) {
+                          // 兼容有些节点初始自带 delay 的情况
+                          isTested = true;
+                          delay = nodeData['delay'] ?? 0;
+                        }
+
+                        String delayStr;
+                        Color delayColor;
+
+                        // 状态判断逻辑
+                        if (!isTested) {
+                          delayStr = '测速';
+                          delayColor = Colors.white54;
+                        } else if (delay <= 0) {
+                          delayStr = '超时';
+                          delayColor = Colors.redAccent; // 超时显示红字
+                        } else {
+                          delayStr = '${delay}ms';
+                          // 传统 CFW 配色逻辑
+                          delayColor = delay < 800 ? Colors.greenAccent : (delay < 1200 ? Colors.orangeAccent : Colors.redAccent);
+                        }
+
                         return InkWell(
                           onTap: () => manager.switchProxy(groupName, nodeName),
                           borderRadius: BorderRadius.circular(6),
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            // 【微调1】将上下内边距从 8 缩小到 6，腾出 4 像素
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                             decoration: BoxDecoration(
                               color: isSelected ? const Color(0xFF3A4B3A) : const Color(0xFF2C2C36),
                               borderRadius: BorderRadius.circular(6),
@@ -190,12 +231,28 @@ class _CollapsibleProxyGroup extends StatelessWidget {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 Text(nodeName, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: isSelected ? Colors.greenAccent : Colors.white, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
-                                const SizedBox(height: 4),
+                                // 【微调2】将两行文字之间的间距从 4 缩小到 2，腾出 2 像素
+                                const SizedBox(height: 2),
                                 Row(
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
                                     Text(nodeType, style: const TextStyle(fontSize: 11, color: Colors.white54)),
-                                    const Text('测速', style: TextStyle(fontSize: 11, color: Colors.white24)),
+                                    // 纯悬浮高亮按钮，无边框，极简高度
+                                    Material(
+                                      color: Colors.transparent,
+                                      child: InkWell(
+                                        onTap: () => manager.testProxyDelay(nodeName),
+                                        borderRadius: BorderRadius.circular(4),
+                                        hoverColor: Colors.white12, // 悬浮时的背景高亮色
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          child: Text(
+                                            delayStr,
+                                            style: TextStyle(fontSize: 11, color: delayColor, fontWeight: FontWeight.bold),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                                   ],
                                 )
                               ],

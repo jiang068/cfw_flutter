@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // 引入系统剪贴板
 import '../core/mihomo_manager.dart';
 
 class ProfilesPage extends StatefulWidget {
@@ -12,75 +14,59 @@ class ProfilesPage extends StatefulWidget {
 
 class _ProfilesPageState extends State<ProfilesPage> {
   final TextEditingController _urlCtrl = TextEditingController();
+  Map<String, String> _urlMap = {};
 
   @override
   void initState() {
     super.initState();
     widget.manager.loadProfiles();
+    _loadUrlMap();
+  }
+
+  Future<void> _loadUrlMap() async {
+    final profile = Platform.environment['USERPROFILE'] ?? '';
+    final file = File('$profile\\.config\\cfw_flutter\\profile_urls.json');
+    if (await file.exists()) {
+      try {
+        final map = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+        if (mounted) {
+          setState(() {
+            _urlMap = map.map((k, v) => MapEntry(k, v.toString()));
+          });
+        }
+      } catch (_) {}
+    }
+  }
+
+  String _timeAgo(DateTime time) {
+    final diff = DateTime.now().difference(time);
+    if (diff.inSeconds < 60) return '几秒前';
+    if (diff.inMinutes < 60) return '${diff.inMinutes} 分钟前';
+    if (diff.inHours < 24) return '${diff.inHours} 小时前';
+    return '${diff.inDays} 天前';
+  }
+
+  String _formatBytes(double bytes) {
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)}MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)}GB';
+  }
+
+  String _formatDate(int timestamp) {
+    final dt = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
+    return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
   }
 
   Widget _buildTopButton(String text, VoidCallback onPressed) {
     return ElevatedButton(
       onPressed: onPressed,
       style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFF383842),
+        backgroundColor: const Color(0xFF5A5A67),
         minimumSize: Size.zero,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+        elevation: 0,
       ),
       child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 13)),
-    );
-  }
-
-  void _showNewProfileDialog(BuildContext context) {
-    final nameCtrl = TextEditingController();
-    final contentCtrl = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF2C2C36),
-        title: const Text('新建配置文件', style: TextStyle(color: Colors.white, fontSize: 16)),
-        content: SizedBox(
-          width: 600,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameCtrl,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(hintText: '配置名称 (如: my_proxy)', hintStyle: TextStyle(color: Colors.white24), filled: true, fillColor: Color(0xFF1E1E24), border: InputBorder.none),
-              ),
-              const SizedBox(height: 10),
-              Expanded(
-                child: TextField(
-                  controller: contentCtrl,
-                  maxLines: 20,
-                  style: const TextStyle(color: Colors.white, fontFamily: 'Consolas', fontSize: 13),
-                  decoration: const InputDecoration(hintText: '在此粘贴 YAML 配置内容...', hintStyle: TextStyle(color: Colors.white24), filled: true, fillColor: Color(0xFF1E1E24), border: InputBorder.none),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消', style: TextStyle(color: Colors.grey))),
-          TextButton(
-            onPressed: () async {
-              if (nameCtrl.text.isEmpty || contentCtrl.text.isEmpty) return;
-              try {
-                await widget.manager.createNewProfile(nameCtrl.text, contentCtrl.text);
-                if (context.mounted) {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('创建并应用成功'), backgroundColor: Colors.green));
-                }
-              } catch (e) {
-                if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString()), backgroundColor: Colors.red));
-              }
-            },
-            child: const Text('保存并应用', style: TextStyle(color: Colors.green)),
-          ),
-        ],
-      ),
     );
   }
 
@@ -103,41 +89,384 @@ class _ProfilesPageState extends State<ProfilesPage> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
+  // ===============================================
+  // 右键菜单与弹窗控制区
+  // ===============================================
+  
+  void _showRightClickMenu(BuildContext context, Offset position, File file, String? url, String currentName) {
+    showMenu(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx + 1, position.dy + 1),
+      color: const Color(0xFF2C2C36),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+      items: [
+        PopupMenuItem(value: 'open_web', child: const Text('打开配置网站', style: TextStyle(color: Colors.white, fontSize: 13))),
+        PopupMenuItem(value: 'edit', child: const Text('编辑', style: TextStyle(color: Colors.white, fontSize: 13))),
+        PopupMenuItem(value: 'update', child: const Text('更新', style: TextStyle(color: Colors.white, fontSize: 13))),
+        PopupMenuItem(value: 'open_dir', child: const Text('打开文件所在位置', style: TextStyle(color: Colors.white, fontSize: 13))),
+        PopupMenuItem(value: 'settings', child: const Text('设置', style: TextStyle(color: Colors.white, fontSize: 13))),
+        PopupMenuItem(value: 'delete', child: const Text('删除', style: TextStyle(color: Colors.redAccent, fontSize: 13))),
+      ],
+    ).then((value) async {
+      if (value == null) return;
+      
+      switch (value) {
+        case 'open_web':
+          if (url != null && url.isNotEmpty) {
+            // 解析出根域名并调用系统浏览器打开
+            try {
+               final uri = Uri.parse(url);
+               final rootUrl = '${uri.scheme}://${uri.host}';
+               Process.run('cmd', ['/c', 'start', rootUrl.replaceAll('&', '^&')]);
+            } catch (_) {}
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('本地配置无网站信息')));
+          }
+          break;
+        case 'edit':
+          _showEditContentDialog(file);
+          break;
+        case 'update':
+          if (url != null && url.isNotEmpty) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('正在更新...'), duration: Duration(seconds: 1)));
+            try {
+              await widget.manager.updateSingleProfile(file, url);
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('更新成功'), backgroundColor: Colors.green));
+            } catch (e) {
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('更新失败: $e'), backgroundColor: Colors.red));
+            }
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('本地配置无法更新')));
+          }
+          break;
+        case 'open_dir':
+          Process.run('explorer.exe', ['/select,', file.absolute.path]);
+          break;
+        case 'settings':
+          _showProfileSettingsDialog(file, currentName, url);
+          break;
+        case 'delete':
+          await widget.manager.deleteProfile(file);
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已删除'), backgroundColor: Colors.orange));
+          break;
+      }
+    });
+  }
+
+  // 1. 纯文本编辑器弹窗
+  void _showEditContentDialog(File file) async {
+    final content = await file.readAsString();
+    final ctrl = TextEditingController(text: content);
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF2C2C36),
+        title: const Text('编辑配置文件 (YAML)', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: SizedBox(
+          width: 700,
+          height: 500,
+          child: TextField(
+            controller: ctrl,
+            maxLines: null,
+            expands: true,
+            style: const TextStyle(color: Colors.white70, fontFamily: 'Consolas', fontSize: 13),
+            decoration: const InputDecoration(filled: true, fillColor: Color(0xFF1E1E24), border: InputBorder.none),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消', style: TextStyle(color: Colors.grey))),
+          TextButton(
+            onPressed: () async {
+              await file.writeAsString(ctrl.text);
+              widget.manager.loadProfiles();
+              if (widget.manager.activeProfilePath.value == file.absolute.path) {
+                 await widget.manager.switchProfile(file); // 重新加载内核
+              }
+              if (context.mounted) Navigator.pop(context);
+            },
+            child: const Text('保存', style: TextStyle(color: Colors.green))
+          ),
+        ],
+      )
+    );
+  }
+
+  // 2. CFW 风格的配置设置面板
+  void _showProfileSettingsDialog(File file, String currentName, String? currentUrl) {
+    final nameCtrl = TextEditingController(text: currentName);
+    final urlCtrl = TextEditingController(text: currentUrl ?? '');
+    final headerCtrl = TextEditingController(text: 'key1:value1\nkey2:value2'); 
+    final intervalCtrl = TextEditingController(text: '24');
+    final cronCtrl = TextEditingController(text: '0 0 * * *');
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF2C2C36),
+        title: const Text('编辑配置信息', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: SingleChildScrollView(
+          child: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildSettingInput('名字 *', nameCtrl),
+                const SizedBox(height: 12),
+                _buildSettingInput('URL', urlCtrl, maxLines: 3),
+                const SizedBox(height: 12),
+                _buildSettingInput('标头', headerCtrl, maxLines: 3),
+                const SizedBox(height: 12),
+                _buildSettingInput('更新间隔（小时）', intervalCtrl),
+                const SizedBox(height: 12),
+                _buildSettingInput('更新定时程序Cron (UNIX)', cronCtrl),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消', style: TextStyle(color: Colors.grey))),
+          TextButton(
+            onPressed: () async {
+              // 在此保存元数据：由于界面展示强依赖首行的 `# name: `，我们修改首行
+              try {
+                 final lines = await file.readAsLines();
+                 // 清理旧的 name 注释
+                 lines.removeWhere((l) => l.trim().toLowerCase().startsWith('# name:'));
+                 // 注入新的名字
+                 lines.insert(0, '# name: ${nameCtrl.text}');
+                 await file.writeAsString(lines.join('\n'));
+                 widget.manager.loadProfiles();
+              } catch (_) {}
+              
+              if (context.mounted) Navigator.pop(context);
+            },
+            child: const Text('确定', style: TextStyle(color: Colors.green))
+          ),
+        ],
+      )
+    );
+  }
+
+  Widget _buildSettingInput(String label, TextEditingController ctrl, {int maxLines = 1}) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 顶部操作栏 (单行极致压缩)
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
-          color: const Color(0xFF22222B),
-          child: Row(
+        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+        const SizedBox(height: 6),
+        TextField(
+          controller: ctrl,
+          maxLines: maxLines,
+          style: const TextStyle(color: Colors.white, fontSize: 13),
+          decoration: const InputDecoration(
+            filled: true, fillColor: Color(0xFF1E1E24),
+            border: OutlineInputBorder(borderSide: BorderSide.none),
+            contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            isDense: true,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ===============================================
+
+  Widget _buildProfileCard(File file, String? url, bool isActive) {
+    final stat = file.statSync();
+    final timeStr = _timeAgo(stat.modified);
+    String host = 'local file';
+    bool isRemote = url != null && url.isNotEmpty; // 判断是否为远程订阅
+
+    if (isRemote) {
+      try {
+        host = Uri.parse(url!).authority; 
+      } catch (_) {}
+    }
+
+    String name = file.path.split(Platform.pathSeparator).last;
+    name = name.replaceAll('.yaml', '').replaceAll('.yml', ''); 
+
+    double? up, down, total;
+    int? expire;
+
+    try {
+      final lines = file.readAsLinesSync().take(20);
+      for (var line in lines) {
+        final l = line.toLowerCase();
+        if (l.startsWith('# upload:')) up = double.tryParse(l.split(':')[1].trim());
+        if (l.startsWith('# download:')) down = double.tryParse(l.split(':')[1].trim());
+        if (l.startsWith('# total:')) total = double.tryParse(l.split(':')[1].trim());
+        if (l.startsWith('# expire:')) expire = int.tryParse(l.split(':')[1].trim());
+        if (l.startsWith('# name:')) name = line.substring(7).trim(); 
+      }
+    } catch (_) {}
+
+    bool hasTraffic = total != null && total > 0;
+    double used = (up ?? 0) + (down ?? 0);
+    double ratio = hasTraffic ? (used / total).clamp(0.0, 1.0) : 0;
+    Color barColor = ratio > 0.9 ? Colors.redAccent : (ratio > 0.7 ? Colors.orangeAccent : Colors.green);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTapDown: (details) => _showRightClickMenu(context, details.globalPosition, file, url, name),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF383842), 
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          // 核心修改：使用 Stack 让操作按钮绝对悬浮在右上角
+          child: Stack(
             children: [
-              Expanded(
-                flex: 3,
-                child: SizedBox(
-                  height: 32,
-                  child: TextField(
-                    controller: _urlCtrl,
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                    textAlignVertical: TextAlignVertical.center,
-                    decoration: const InputDecoration(
-                      hintText: '输入配置订阅 URL...',
-                      hintStyle: TextStyle(color: Colors.white24),
-                      isDense: true,
-                      filled: true, fillColor: Color(0xFF1E1E24),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                      border: OutlineInputBorder(borderSide: BorderSide.none),
+              // 1. 底层卡片内容 (点击切换配置)
+              Row(
+                children: [
+                  Container(width: 4, color: isActive ? Colors.green : Colors.transparent),
+                  Expanded(
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () => _handleSwitch(file),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              // 标题 (右侧强制留出 35px 的防重叠边距)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 35),
+                                child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                              ),
+                              const SizedBox(height: 4),
+                              Text('$host ($timeStr)', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                              if (hasTraffic) ...[
+                                const SizedBox(height: 6),
+                                Row(
+                                  children: [
+                                    Text('${_formatBytes(used)}  ${_formatBytes(total!)}', style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                                    const SizedBox(width: 10),
+                                    if (expire != null)
+                                      Text(_formatDate(expire), style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Container(
+                                  height: 2.5, width: double.infinity, color: const Color(0xFF454555), alignment: Alignment.centerLeft,
+                                  child: FractionallySizedBox(widthFactor: ratio, child: Container(color: barColor)),
+                                ),
+                              ]
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              
+              // 2. 右上角绝对定位的独立操作按钮
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(20), // 让悬浮点击特效是圆形的
+                    hoverColor: Colors.white10,
+                    onTap: () async {
+                      if (isRemote) {
+                        // 远程配置：执行更新操作
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('正在更新...'), duration: Duration(seconds: 1)));
+                        try {
+                          await widget.manager.updateSingleProfile(file, url!);
+                          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('更新成功'), backgroundColor: Colors.green));
+                        } catch (e) {
+                          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('更新失败: $e'), backgroundColor: Colors.red));
+                        }
+                      } else {
+                        // 本地配置：执行编辑操作
+                        _showEditContentDialog(file);
+                      }
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.all(6.0),
+                      child: Icon(
+                        isRemote ? Icons.refresh : Icons.code, 
+                        color: Colors.white70, 
+                        size: 20,
+                      ),
                     ),
                   ),
                 ),
               ),
-              const SizedBox(width: 5),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+          decoration: const BoxDecoration(
+            color: Color(0xFF22222B),
+            border: Border(bottom: BorderSide(color: Colors.white10, width: 1)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Container(
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E1E24),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.white12, width: 1),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _urlCtrl,
+                          style: const TextStyle(color: Colors.white, fontSize: 14),
+                          decoration: const InputDecoration(
+                            hintText: '从URL下载',
+                            hintStyle: TextStyle(color: Colors.white38, fontSize: 14),
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                      // 替换为剪贴板一键读取功能
+                      IconButton(
+                        icon: const Icon(Icons.content_paste, color: Colors.white54, size: 18),
+                        tooltip: '从剪贴板粘贴',
+                        onPressed: () async {
+                          final data = await Clipboard.getData('text/plain');
+                          if (data != null && data.text != null) {
+                            setState(() => _urlCtrl.text = data.text!);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 15),
               _buildTopButton('下载', () async {
                 if (_urlCtrl.text.isEmpty) return;
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('正在下载...'), duration: Duration(seconds: 1)));
                 try {
                   await widget.manager.downloadProfile(_urlCtrl.text);
+                  await _loadUrlMap();
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('下载并应用成功'), backgroundColor: Colors.green));
                     _urlCtrl.clear();
@@ -146,7 +475,7 @@ class _ProfilesPageState extends State<ProfilesPage> {
                   if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString()), backgroundColor: Colors.red));
                 }
               }),
-              const SizedBox(width: 5),
+              const SizedBox(width: 10),
               _buildTopButton('更新全部', () async {
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('正在更新所有配置...'), duration: Duration(seconds: 1)));
                 try {
@@ -156,7 +485,7 @@ class _ProfilesPageState extends State<ProfilesPage> {
                   if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString()), backgroundColor: Colors.red));
                 }
               }),
-              const SizedBox(width: 5),
+              const SizedBox(width: 10),
               _buildTopButton('导入', () async {
                 try {
                   await widget.manager.importProfile();
@@ -164,51 +493,35 @@ class _ProfilesPageState extends State<ProfilesPage> {
                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('导入并应用成功'), backgroundColor: Colors.green));
                   }
                 } catch (e) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString()), backgroundColor: Colors.red));
-                  }
+                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString()), backgroundColor: Colors.red));
                 }
               }),
-              const SizedBox(width: 5),
-              _buildTopButton('新建配置', () => _showNewProfileDialog(context)),
             ],
           ),
         ),
-        // 配置列表
         Expanded(
           child: ValueListenableBuilder<List<File>>(
             valueListenable: widget.manager.profiles,
             builder: (context, files, _) {
               if (files.isEmpty) return const Center(child: Text('暂无配置文件，请点击导入或下载', style: TextStyle(color: Colors.white24)));
-              return ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 10),
+              return GridView.builder(
+                padding: const EdgeInsets.all(20),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2, 
+                  mainAxisExtent: 95,
+                  crossAxisSpacing: 15,
+                  mainAxisSpacing: 15,
+                ),
                 itemCount: files.length,
                 itemBuilder: (context, index) {
                   final file = files[index];
-                  final filename = file.path.split(Platform.pathSeparator).last;
                   return ValueListenableBuilder<String>(
                     valueListenable: widget.manager.activeProfilePath,
                     builder: (context, activePath, _) {
                       final isActive = activePath == file.absolute.path;
-                      return Card(
-                        color: isActive ? const Color(0xFF3A4B3A) : const Color(0xFF2C2C36),
-                        margin: const EdgeInsets.only(bottom: 10),
-                        child: InkWell(
-                          onTap: () => _handleSwitch(file),
-                          borderRadius: BorderRadius.circular(8),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-                            child: Row(
-                              children: [
-                                Icon(Icons.description, color: isActive ? Colors.green : Colors.white54, size: 24),
-                                const SizedBox(width: 15),
-                                Expanded(child: Text(filename, style: TextStyle(color: isActive ? Colors.greenAccent : Colors.white, fontSize: 15, fontWeight: isActive ? FontWeight.bold : FontWeight.normal))),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    }
+                      final url = _urlMap[file.absolute.path];
+                      return _buildProfileCard(file, url, isActive);
+                    },
                   );
                 },
               );
