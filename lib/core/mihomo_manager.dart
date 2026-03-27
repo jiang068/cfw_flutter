@@ -62,6 +62,16 @@ class MihomoManager {
   // 服务模式状态（是否以任务计划方式运行）
   final ValueNotifier<bool> isServiceModeEnabled = ValueNotifier<bool>(false);
   
+  // 记录代理组的折叠状态 (true 为折叠，false 为展开)
+  final Map<String, ValueNotifier<bool>> groupCollapseStates = {};
+
+  ValueNotifier<bool> getGroupCollapseState(String groupName) {
+    if (!groupCollapseStates.containsKey(groupName)) {
+      groupCollapseStates[groupName] = ValueNotifier<bool>(false); // 默认不折叠
+    }
+    return groupCollapseStates[groupName]!;
+  }
+  
   // 配置文件列表状态
   final ValueNotifier<List<File>> profiles = ValueNotifier<List<File>>([]);
   final ValueNotifier<String> activeProfilePath = ValueNotifier<String>('');
@@ -810,6 +820,17 @@ rules:
     }
   }
 
+  /// 切换代理组折叠状态并持久化
+  Future<void> toggleGroupCollapse(String groupName) async {
+    final state = getGroupCollapseState(groupName);
+    state.value = !state.value;
+    try {
+      await _saveLocalSettings();
+    } catch (e) {
+      debugPrint('💾 [持久化] 保存折叠状态失败: $e');
+    }
+  }
+
   // ---- 本地配置持久化（Windows 用户目录下 .config/cfw_flutter/settings.json） ----
   String get _settingsPath {
     final profile = Platform.environment['USERPROFILE'] ?? '';
@@ -827,6 +848,13 @@ rules:
       current['mixin_text'] = mixinText.value;
       // tun 高级配置
       current['tun_advanced'] = tunAdvanced.value;
+      
+      // 序列化折叠状态
+      Map<String, bool> collapseMap = {};
+      groupCollapseStates.forEach((key, notifier) {
+        collapseMap[key] = notifier.value;
+      });
+      current['collapse_states'] = collapseMap;
       // 如果已有窗口信息则合并（避免覆盖）
       try {
         if (await file.exists()) {
@@ -856,6 +884,14 @@ rules:
           if (map.containsKey('mixin_enabled')) isMixinEnabled.value = map['mixin_enabled'] == true;
           if (map.containsKey('mixin_text')) mixinText.value = (map['mixin_text'] ?? '').toString();
           if (map.containsKey('tun_advanced') && map['tun_advanced'] is Map) tunAdvanced.value = Map<String, dynamic>.from(map['tun_advanced']);
+          
+          // 恢复折叠状态
+          if (map.containsKey('collapse_states') && map['collapse_states'] is Map) {
+            final states = map['collapse_states'] as Map;
+            states.forEach((k, v) {
+              groupCollapseStates[k.toString()] = ValueNotifier<bool>(v == true);
+            });
+          }
         } catch (_) {}
         // 注入回内核内存
         await _dio.patch('/configs', data: map);
