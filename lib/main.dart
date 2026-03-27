@@ -29,9 +29,11 @@ void main(List<String> args) async {
 
   await windowManager.ensureInitialized();
 
-  WindowOptions windowOptions;
+  double? savedW;
+  double? savedH;
   double? savedX;
   double? savedY;
+
   try {
     final profile = Platform.environment['USERPROFILE'] ?? '';
     final file = File('$profile\\.config\\cfw_flutter\\settings.json');
@@ -39,37 +41,32 @@ void main(List<String> args) async {
       final s = await file.readAsString();
       final map = jsonDecode(s) as Map<String, dynamic>?;
       if (map != null && map.containsKey('window_width') && map.containsKey('window_height')) {
-        final double w = (map['window_width'] is num) ? (map['window_width'] as num).toDouble() : double.parse(map['window_width'].toString());
-        final double h = (map['window_height'] is num) ? (map['window_height'] as num).toDouble() : double.parse(map['window_height'].toString());
+        savedW = (map['window_width'] is num) ? (map['window_width'] as num).toDouble() : double.tryParse(map['window_width'].toString());
+        savedH = (map['window_height'] is num) ? (map['window_height'] as num).toDouble() : double.tryParse(map['window_height'].toString());
         savedX = (map['window_x'] is num) ? (map['window_x'] as num).toDouble() : double.tryParse(map['window_x']?.toString() ?? '0') ?? 0.0;
         savedY = (map['window_y'] is num) ? (map['window_y'] as num).toDouble() : double.tryParse(map['window_y']?.toString() ?? '0') ?? 0.0;
-        windowOptions = WindowOptions(
-          size: Size(w, h),
-          minimumSize: const Size(700, 500),
-          center: false,
-          backgroundColor: Colors.transparent,
-          skipTaskbar: false,
-          titleBarStyle: TitleBarStyle.hidden,
-        );
-      } else {
-        windowOptions = const WindowOptions(size: Size(750, 600), minimumSize: Size(700, 500), center: true, backgroundColor: Colors.transparent, skipTaskbar: false, titleBarStyle: TitleBarStyle.hidden);
       }
-    } else {
-      windowOptions = const WindowOptions(size: Size(750, 600), minimumSize: Size(700, 500), center: true, backgroundColor: Colors.transparent, skipTaskbar: false, titleBarStyle: TitleBarStyle.hidden);
     }
-  } catch (e) {
-    windowOptions = const WindowOptions(size: Size(750, 600), minimumSize: Size(700, 500), center: true, backgroundColor: Colors.transparent, skipTaskbar: false, titleBarStyle: TitleBarStyle.hidden);
-  }
+  } catch (_) {}
 
-  windowManager.waitUntilReadyToShow(windowOptions, () async {
-    try {
-      if (savedX != null && savedY != null) {
-        await windowManager.setPosition(Offset(savedX, savedY));
-      }
-    } catch (_) {}
-    await windowManager.show();
-    await windowManager.focus();
-  });
+  // 核心修复：完全手动控制窗口，不用 waitUntilReadyToShow
+  // 先隐藏，设好所有参数，等第一帧渲染完再 show，彻底消除闪烁和跳变
+  try {
+    await windowManager.hide();
+    await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
+    await windowManager.setMinimumSize(const Size(700, 500));
+    await windowManager.setBackgroundColor(const Color(0xFF282832));
+    if (savedW != null && savedH != null) {
+      await windowManager.setSize(Size(savedW, savedH));
+    } else {
+      await windowManager.setSize(const Size(750, 600));
+    }
+    if (savedX != null && savedY != null) {
+      await windowManager.setPosition(Offset(savedX, savedY));
+    } else {
+      await windowManager.setAlignment(Alignment.center);
+    }
+  } catch (_) {}
 
   runApp(const CFWFlutterApp());
 }
@@ -110,7 +107,15 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
     trayManager.addListener(this);
     windowManager.setPreventClose(true);
     _initTray();
-    _manager.startMihomo();
+
+    // 第一帧渲染完毕后，显示窗口并启动内核
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        await windowManager.show();
+        await windowManager.focus();
+      } catch (_) {}
+      _manager.startMihomo();
+    });
   }
 
   @override
@@ -159,20 +164,29 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
   }
 
   @override
-  void onTrayIconMouseDown() async { await windowManager.show(); await windowManager.focus(); }
+  void onTrayIconMouseDown() async {
+    await windowManager.show();
+    await windowManager.focus();
+  }
+
   @override
   void onTrayIconRightMouseDown() => trayManager.popUpContextMenu();
+
   @override
   void onTrayMenuItemClick(MenuItem item) async {
-    if (item.key == 'show_window') onTrayIconMouseDown();
-    else if (item.key == 'exit_app') { await _manager.dispose(); exit(0); }
+    if (item.key == 'show_window') {
+      onTrayIconMouseDown();
+    } else if (item.key == 'exit_app') {
+      await _manager.dispose();
+      exit(0);
+    }
   }
 
   Widget _buildSidebar() => Container(
-    width: 180, color: const Color(0xFF22222B),
+    width: 180,
+    color: const Color(0xFF22222B),
     child: Column(
       children: [
-        // 核心修复：移除 height 限制，用 padding 自适应，防止溢出
         Container(
           padding: const EdgeInsets.symmetric(vertical: 20),
           alignment: Alignment.center,
@@ -190,7 +204,11 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
                         children: [
                           const Icon(Icons.arrow_upward, color: Colors.greenAccent, size: 16),
                           const SizedBox(width: 8),
-                          SizedBox(width: 80, child: Text(up, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.bold))),
+                          SizedBox(
+                            width: 80,
+                            child: Text(up, maxLines: 1, overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.bold)),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 12),
@@ -199,19 +217,30 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
                         children: [
                           const Icon(Icons.arrow_downward, color: Colors.blueAccent, size: 16),
                           const SizedBox(width: 8),
-                          SizedBox(width: 80, child: Text(down, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.blueAccent, fontSize: 13, fontWeight: FontWeight.bold))),
+                          SizedBox(
+                            width: 80,
+                            child: Text(down, maxLines: 1, overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(color: Colors.blueAccent, fontSize: 13, fontWeight: FontWeight.bold)),
+                          ),
                         ],
                       ),
                     ],
                   );
-                }
+                },
               );
-            }
+            },
           ),
         ),
-        _buildNavItem('主页', 0), _buildNavItem('代理', 1), _buildNavItem('配置', 2), _buildNavItem('日志', 3),
+        _buildNavItem('主页', 0),
+        _buildNavItem('代理', 1),
+        _buildNavItem('配置', 2),
+        _buildNavItem('日志', 3),
         const Spacer(),
-        Container(height: 80, alignment: Alignment.center, child: const Text('01 : 21 : 27\n● 已连接', textAlign: TextAlign.center, style: TextStyle(color: Colors.green))),
+        Container(
+          height: 80,
+          alignment: Alignment.center,
+          child: const Text('01 : 21 : 27\n● 已连接', textAlign: TextAlign.center, style: TextStyle(color: Colors.green)),
+        ),
       ],
     ),
   );
@@ -221,10 +250,17 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
     return InkWell(
       onTap: () => setState(() => _selectedIndex = index),
       child: Container(
-        height: 45, margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-        decoration: BoxDecoration(color: isSelected ? const Color(0xFF454555) : Colors.transparent, borderRadius: BorderRadius.circular(6)),
+        height: 45,
+        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF454555) : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+        ),
         alignment: Alignment.center,
-        child: Text(title, style: TextStyle(color: isSelected ? Colors.white : Colors.white60, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+        child: Text(title,
+            style: TextStyle(
+                color: isSelected ? Colors.white : Colors.white60,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
       ),
     );
   }
@@ -233,7 +269,9 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
     return GestureDetector(
       onPanStart: (_) => windowManager.startDragging(),
       child: Container(
-        height: 40, alignment: Alignment.centerRight, color: Colors.transparent,
+        height: 40,
+        alignment: Alignment.centerRight,
+        color: Colors.transparent,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -269,7 +307,7 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
                 ),
               ],
             ),
-          )
+          ),
         ],
       ),
     );

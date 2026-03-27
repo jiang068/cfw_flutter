@@ -139,7 +139,8 @@ class MihomoManager {
       
       // 强杀残留进程
       try {
-        Process.runSync('taskkill', ['/F', '/IM', 'mihomo.exe']);
+        // 核心修复：改为异步执行，绝不阻塞 UI 线程
+        await Process.run('taskkill', ['/F', '/IM', 'mihomo.exe']);
       } catch (_) {}
       await Future.delayed(const Duration(milliseconds: 500));
 
@@ -232,6 +233,20 @@ rules:
             // 启动时加载本地配置文件列表
             try {
               await loadProfiles();
+              // 冷启动后，内核默认读取的是 config.yaml，我们需要将持久化的 activeProfile 重新注入内核
+              if (activeProfilePath.value.isNotEmpty && activeProfilePath.value != _runningConfigPath) {
+                final activeFile = File(activeProfilePath.value);
+                if (await activeFile.exists()) {
+                  debugPrint('🔄 [配置管理] 启动恢复: 正在应用上次记忆的配置');
+                  await _dio.put('/configs', queryParameters: {'force': 'false'}, data: {'path': activeFile.absolute.path});
+                  await syncConfig();
+                  await fetchProxies();
+                } else {
+                  // 文件丢失，回退为默认配置
+                  activeProfilePath.value = _runningConfigPath;
+                  await _saveLocalSettings();
+                }
+              }
             } catch (e) {
               debugPrint('📂 [配置管理] 启动加载 profiles 失败: $e');
             }
@@ -447,26 +462,36 @@ rules:
   Future<void> switchProfile(File file) async {
     debugPrint('📂 [配置管理] 尝试切换配置: ${file.path}');
     try {
-      final content = await file.readAsString();
-      
-      // 覆写到 Home 目录的 config.yaml
-      final runningConfig = File(_runningConfigPath);
-      if (!(await runningConfig.parent.exists())) await runningConfig.parent.create(recursive: true);
-      await runningConfig.writeAsString(content, flush: true);
-
-      // 内核现在的工作目录已经是 Home 目录，所以传入绝对路径或文件名均可，这里传绝对路径最稳
-      final absolutePath = runningConfig.absolute.path;
+      // 核心修复：不再覆写 config.yaml，直接将选中的绝对路径传给内核
+      final absolutePath = file.absolute.path;
       await _dio.put('/configs', queryParameters: {'force': 'false'}, data: {'path': absolutePath});
       
-      activeProfilePath.value = file.absolute.path;
+      activeProfilePath.value = absolutePath;
       await syncConfig();
       await fetchProxies();
-      debugPrint('✅ [配置管理] 切换并覆写 config.yaml 成功');
+      
+      // 持久化当前选中的路径
+      try {
+        await _saveLocalSettings();
+      } catch (e) {
+        debugPrint('💾 [持久化] 保存当前配置路径失败: $e');
+      }
+      debugPrint('✅ [配置管理] 切换成功: $absolutePath');
     } on DioException catch (e) {
+      // 如果配置有语法错误，内核会报错。此时强行回退到默认的 config.yaml
+      debugPrint('❌ [配置管理] 切换失败，正在回退到默认配置...');
+      activeProfilePath.value = _runningConfigPath;
+      try {
+        await _dio.put('/configs', queryParameters: {'force': 'false'}, data: {'path': _runningConfigPath});
+        await syncConfig();
+        await fetchProxies();
+        await _saveLocalSettings();
+      } catch (_) {}
+
       final errorMsg = e.response?.data?['message'] ?? e.message ?? '未知语法错误';
-      throw Exception('配置文件格式有误，内核拒绝加载:\n$errorMsg');
+      throw Exception('配置文件格式有误，内核拒绝加载，已回退到默认配置:\n$errorMsg');
     } catch (e) {
-      throw Exception('文件读取或覆盖失败: $e');
+      throw Exception('文件读取或切换失败: $e');
     }
   }
 
@@ -855,6 +880,8 @@ rules:
         collapseMap[key] = notifier.value;
       });
       current['collapse_states'] = collapseMap;
+      // 保存当前选中的配置文件路径
+      current['active_profile'] = activeProfilePath.value;
       // 如果已有窗口信息则合并（避免覆盖）
       try {
         if (await file.exists()) {
@@ -891,6 +918,11 @@ rules:
             states.forEach((k, v) {
               groupCollapseStates[k.toString()] = ValueNotifier<bool>(v == true);
             });
+          }
+          
+          // 恢复当前选中的配置文件路径
+          if (map.containsKey('active_profile')) {
+            activeProfilePath.value = map['active_profile']?.toString() ?? '';
           }
         } catch (_) {}
         // 注入回内核内存
