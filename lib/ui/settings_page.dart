@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/mihomo_manager.dart';
+import '../main.dart'; 
 
 class SettingsPage extends StatefulWidget {
   final MihomoManager manager;
@@ -16,7 +17,6 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
-    // 假设配置保存在 manager.config 中，读取现有值
     final config = widget.manager.config.value;
     _urlController.text = config['test_url']?.toString() ?? '';
     _timeoutController.text = config['test_timeout']?.toString() ?? '';
@@ -24,32 +24,33 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
-      children: [
-        const Text('设置', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
-        const SizedBox(height: 30),
-        _buildInputRow(
-          '延迟测试网址',
-          _urlController,
-          'http://www.gstatic.com/generate_204',
-          (val) => widget.manager.updateConfig('test_url', val),
-        ),
-        const SizedBox(height: 15),
-        _buildInputRow(
-          '延迟测试超时',
-          _timeoutController,
-          '3000',
-          (val) {
-            final timeout = int.tryParse(val);
-            if (timeout != null) {
-              widget.manager.updateConfig('test_timeout', timeout);
-            }
-          },
-          isNumber: true,
-          suffix: 'ms',
-        ),
-      ],
+    return SubPageLayout(
+      header: const Text('设置', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+      content: ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+        children: [
+          _buildInputRow(
+            '延迟测试网址',
+            _urlController,
+            'http://www.gstatic.com/generate_204',
+            (val) => widget.manager.updateConfig('test_url', val),
+          ),
+          const SizedBox(height: 15),
+          _buildInputRow(
+            '延迟测试超时',
+            _timeoutController,
+            '3000',
+            (val) {
+              final timeout = int.tryParse(val);
+              if (timeout != null) {
+                widget.manager.updateConfig('test_timeout', timeout);
+              }
+            },
+            isNumber: true,
+            suffix: 'ms',
+          ),
+        ],
+      ),
     );
   }
 
@@ -69,7 +70,8 @@ class _SettingsPageState extends State<SettingsPage> {
               hintText: hint,
               hintStyle: const TextStyle(color: Colors.white24),
               filled: true,
-              fillColor: const Color(0xFF1E1E24),
+              // 修改：输入框背景色改为 #373542
+              fillColor: const Color(0xFF373542),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide.none),
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               suffixText: suffix,

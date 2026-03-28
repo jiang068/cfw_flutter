@@ -34,6 +34,11 @@ class MihomoManager {
   WebSocket? _logSocket;
   WebSocket? _trafficSocket;
 
+  // 正在切换的配置文件路径 (用于 UI 动画显示)
+  final ValueNotifier<String> switchingProfilePath = ValueNotifier<String>('');
+  // 代理组折叠触发器 (用于 Sliver 架构极速重绘)
+  final ValueNotifier<int> collapseTrigger = ValueNotifier<int>(0);
+
   // 状态通知器（UI 层通过 ValueListenableBuilder 订阅）
   final ValueNotifier<bool> isLoadingProxies = ValueNotifier<bool>(false);
   final ValueNotifier<List<String>> groupNames = ValueNotifier<List<String>>(<String>[]);
@@ -607,37 +612,45 @@ rules:
 
   Future<void> switchProfile(File file) async {
     debugPrint('📂 [配置管理] 尝试切换配置: ${file.path}');
+    final absolutePath = file.absolute.path;
+    
+    // ===============================================
+    // 核心优化：防闪烁延迟加载机制
+    // 如果内核切换耗时 < 150ms（秒出），绝不显示动画避免闪烁。
+    // 如果耗时 > 150ms（卡顿），才亮起绿条滚动动画告诉用户正在加载。
+    // ===============================================
+    bool isCompleted = false;
+    Future.delayed(const Duration(milliseconds: 150), () {
+      if (!isCompleted) {
+        switchingProfilePath.value = absolutePath;
+      }
+    });
+
     try {
-      // 1. 切换前：把我们主页 UI 里用户自己设定的核心参数先存起来
       final currentPort = config.value['port'] ?? 7891;
       final currentAllowLan = config.value['allow-lan'] ?? false;
       final currentMode = config.value['mode'] ?? 'rule';
 
-      // 2. 让内核加载机场下载的 YAML
-      final absolutePath = file.absolute.path;
-      await _dio.put('/configs', queryParameters: {'force': 'false'}, data: {'path': absolutePath});
+      await _dio.put('/configs', queryParameters: {'force': 'true'}, data: {'path': absolutePath});
       
-      // 3. 核心修复：加载完立刻拍回用户的本地设置！无视机场在 YAML 里写的 port/allow-lan
       final overrideData = {
         'port': currentPort,
-        'mixed-port': currentPort, // 统一使用我们的端口
+        'mixed-port': currentPort,
         'allow-lan': currentAllowLan,
         'mode': currentMode,
       };
       await _dio.patch('/configs', data: overrideData);
 
       activeProfilePath.value = absolutePath;
-      await syncConfig(); // 此时同步回来的状态就完美保持了用户的设置
+      await syncConfig(); 
       await fetchProxies();
       
-      // 持久化当前选中的路径
       try {
         await _saveLocalSettings();
-      } catch (e) {
-        debugPrint('💾 [持久化] 保存当前配置路径失败: $e');
-      }
+      } catch (e) {}
       debugPrint('✅ [配置管理] 切换并覆写本地设置成功: $absolutePath');
     } on DioException catch (e) {
+      // 错误回退处理保持不变... (省略，保持你现有的报错回退逻辑即可)
       debugPrint('❌ [配置管理] 切换失败，正在回退到默认配置...');
       activeProfilePath.value = _runningConfigPath;
       try {
@@ -646,11 +659,17 @@ rules:
         await fetchProxies();
         await _saveLocalSettings();
       } catch (_) {}
-
       final errorMsg = e.response?.data?['message'] ?? e.message ?? '未知语法错误';
       throw Exception('配置文件格式有误，内核拒绝加载，已回退到默认配置:\n$errorMsg');
     } catch (e) {
       throw Exception('文件读取或切换失败: $e');
+    } finally {
+      // 无论成功还是失败，打上完成标记
+      isCompleted = true;
+      // 如果之前已经触发了动画，现在把它关掉
+      if (switchingProfilePath.value == absolutePath) {
+        switchingProfilePath.value = '';
+      }
     }
   }
 
@@ -754,20 +773,21 @@ rules:
     try {
       final baseUrl = _dio.options.baseUrl.replaceFirst('http', 'ws');
       final secret = _dio.options.headers['Authorization']?.replaceAll('Bearer ', '') ?? '';
-      _logSocket = await WebSocket.connect('$baseUrl/logs?level=info&token=$secret');
+      
+      // 核心修复：读取当前配置的真实日志级别，不再写死 info
+      final currentLevel = config.value['log-level'] ?? 'info';
+      
+      _logSocket = await WebSocket.connect('$baseUrl/logs?level=$currentLevel&token=$secret');
       _logSocket!.listen((data) {
         try {
           final json = jsonDecode(data);
           parseLog((json['type'] ?? 'info').toString(), json['payload'] ?? '');
-        } catch (_) {
-          // 避免在频繁的日志回调中打印信息导致 UI/控制台阻塞
-        }
+        } catch (_) {}
       }, onError: (e) {
-        // 保留错误打印以便定位连接/协议问题
         debugPrint('log socket error: $e');
       });
     } catch (e) {
-          debugPrint('connectLogSocket failed: $e');
+      debugPrint('connectLogSocket failed: $e');
     }
   }
 
@@ -1008,6 +1028,7 @@ rules:
   Future<void> toggleGroupCollapse(String groupName) async {
     final state = getGroupCollapseState(groupName);
     state.value = !state.value;
+    collapseTrigger.value++; // 核心修复：通知 UI 极速重绘展开/折叠状态
     try {
       await _saveLocalSettings();
     } catch (e) {
@@ -1117,18 +1138,43 @@ rules:
     }
   }
 
-  /// 依次测试代理组内所有节点（使用并发限制，解决延迟虚高）
+  /// 依次测试代理组内所有节点（智能混合测速）
   Future<void> testGroupDelay(String groupName) async {
     final groupData = proxiesData.value[groupName];
     if (groupData == null) return;
     
+    final String type = groupData['type'] ?? '';
     final List<dynamic> allNodes = groupData['all'] ?? [];
-    
-    // 核心修复：控制并发数为 5，避免几百个请求同时堵塞导致延迟虚高
+
+    // 针对自动组 (URLTest / Fallback / LoadBalance)：
+    // 直接调用原生 API，让内核在后台高并发测速，并强制触发其底层的“自动选择/故障转移”重新计算逻辑
+    if (type == 'URLTest' || type == 'Fallback' || type == 'LoadBalance') {
+      final timeout = config.value['test_timeout'] ?? 3000;
+      var url = config.value['test_url']?.toString() ?? '';
+      if (url.isEmpty) url = 'http://www.gstatic.com/generate_204';
+
+      try {
+        debugPrint('🚀 [智能测速] 触发原生自动组重新评估: $groupName');
+        await _dio.get('/group/${Uri.encodeComponent(groupName)}/delay', queryParameters: {
+          'url': url,
+          'timeout': timeout,
+        });
+        // 等待一小会儿让内核完成切换，然后拉取最新状态刷新 UI
+        await Future.delayed(const Duration(milliseconds: 500));
+        await fetchProxies();
+      } catch (e) {
+        debugPrint('🌐 [API 请求失败] 自动组测速失败: $e');
+      }
+      return; // 结束，不执行下方的自定义逻辑
+    }
+
+    // 针对手动组 (Selector)：
+    // 坚决不用原生 API，防止内核清空用户的手动选择。
+    // 使用自定义的并发轮询（并发数5），只更新 UI 的延迟数字，不干涉内核状态。
+    debugPrint('🐢 [智能测速] 执行安全的前端手动组并发测速: $groupName');
     const int concurrency = 5;
     for (int i = 0; i < allNodes.length; i += concurrency) {
       final chunk = allNodes.sublist(i, min(i + concurrency, allNodes.length));
-      // 等待这 5 个节点测完，再测下一批
       await Future.wait(chunk.map((nodeName) => testProxyDelay(nodeName.toString())));
     }
   }
@@ -1151,6 +1197,7 @@ rules:
       proxiesData.value = currentData; 
     }
   }
+
   // ==========================================
   // 单个配置操作 (更新、删除)
   // ==========================================

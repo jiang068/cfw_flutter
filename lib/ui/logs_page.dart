@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../core/mihomo_manager.dart';
+import '../main.dart'; 
 
 class LogsPage extends StatefulWidget {
   final MihomoManager manager;
@@ -24,7 +25,6 @@ class _LogsPageState extends State<LogsPage> {
     _localLogs = List.from(widget.manager.logs.value);
     widget.manager.logs.addListener(_onLogsChanged);
 
-    // 初始化读取日志级别状态
     final currentLevel = widget.manager.config.value['log-level']?.toString().toLowerCase();
     _isDebug = currentLevel == 'debug';
   }
@@ -43,7 +43,6 @@ class _LogsPageState extends State<LogsPage> {
     }
   }
 
-  // 过滤后的日志
   List<LogItem> get _filteredLogs {
     if (_searchQuery.isEmpty) return _localLogs;
     final q = _searchQuery.toLowerCase();
@@ -57,36 +56,9 @@ class _LogsPageState extends State<LogsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        // 顶部工具栏
-        _buildHeaderBar(),
-        // 底部日志列表区
-        Expanded(
-          child: Container(
-            color: const Color(0xFF282832),
-            child: ListView.builder(
-              reverse: true, // 核心机制：让 index 0（最新日志）始终在最底部并往上顶
-              itemCount: _filteredLogs.length,
-              itemBuilder: (context, index) {
-                final log = _filteredLogs[index];
-                return _buildLogItem(log);
-              },
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildHeaderBar() {
-    return Container(
-      height: 75,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      color: const Color(0xFF22222B),
-      child: Row(
+    return SubPageLayout(
+      header: Row(
         children: [
-          // 左侧：标题与模式
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.center,
@@ -97,7 +69,6 @@ class _LogsPageState extends State<LogsPage> {
                 valueListenable: widget.manager.config,
                 builder: (context, config, _) {
                   final mode = config['mode']?.toString().toUpperCase() ?? 'RULE';
-                  // 简单的中文化映射
                   String modeText = mode == 'RULE' ? '规则' : (mode == 'GLOBAL' ? '全局' : (mode == 'DIRECT' ? '直连' : mode));
                   return Text('模式: $modeText', style: const TextStyle(fontSize: 13, color: Colors.white70));
                 },
@@ -106,12 +77,12 @@ class _LogsPageState extends State<LogsPage> {
           ),
           const SizedBox(width: 25),
           
-          // 中间：搜索框
           Expanded(
             child: Container(
               height: 36,
               decoration: BoxDecoration(
-                color: const Color(0xFF1E1E24),
+                // 修改：输入框背景色改为 #373542
+                color: const Color(0xFF373542),
                 borderRadius: BorderRadius.circular(4),
                 border: Border.all(color: Colors.white12),
               ),
@@ -130,11 +101,9 @@ class _LogsPageState extends State<LogsPage> {
           ),
           const SizedBox(width: 20),
           
-          // 右侧功能区：连体切换按钮 + 动作按钮
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // 模式切换
               Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -157,10 +126,9 @@ class _LogsPageState extends State<LogsPage> {
                 ],
               ),
               const SizedBox(width: 15),
-              
-              // 清除按钮
               Material(
-                color: Colors.green, // 经典绿色
+                // 修改：清除按钮颜色 #00AA00
+                color: const Color(0xFF00AA00),
                 borderRadius: BorderRadius.circular(4),
                 child: InkWell(
                   onTap: () {
@@ -175,17 +143,14 @@ class _LogsPageState extends State<LogsPage> {
                 ),
               ),
               const SizedBox(width: 10),
-              
-              // 暂停/开始按钮
               Material(
-                color: _isPaused ? const Color(0xFF2196F3) : const Color(0xFFE53935), // 蓝 / 红
+                color: _isPaused ? const Color(0xFF2196F3) : const Color(0xFFE53935),
                 borderRadius: BorderRadius.circular(4),
                 child: InkWell(
                   onTap: () {
                     setState(() {
                       _isPaused = !_isPaused;
                       if (!_isPaused) {
-                        // 恢复时立即同步最新日志
                         _localLogs = List.from(widget.manager.logs.value);
                       }
                     });
@@ -203,19 +168,25 @@ class _LogsPageState extends State<LogsPage> {
           ),
         ],
       ),
+      content: ListView.builder(
+        reverse: true,
+        itemCount: _filteredLogs.length,
+        itemBuilder: (context, index) {
+          final log = _filteredLogs[index];
+          return _buildLogItem(log);
+        },
+      ),
     );
   }
 
-  // 渲染单条日志块
   Widget _buildLogItem(LogItem log) {
-    // 状态判定
     bool isError = log.type == 'error' || log.type == 'err';
     bool isWarn = log.type == 'warn' || log.type == 'warning';
     
     String emoji = isError ? '❌' : (isWarn ? '⚠️' : '✅');
-    Color msgColor = isError ? Colors.redAccent : (isWarn ? Colors.orangeAccent : Colors.green);
+    // 修改：日志颜色微调，错误使用 #92484E，正常使用 #00AA00
+    Color msgColor = isError ? const Color(0xFF92484E) : (isWarn ? Colors.orangeAccent : const Color(0xFF00AA00));
 
-    // 智能提取目标地址：优先用 parseLog 提取的 dest，若无则尝试按 "-->" 切割
     String dest = log.destination;
     if (dest.isEmpty && log.msg.contains('-->')) {
       final parts = log.msg.split('-->');
@@ -234,7 +205,6 @@ class _LogsPageState extends State<LogsPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 第一行：状态符号 [TCP] 127.0.0.1:xxx --> yyy + 时间
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -251,11 +221,8 @@ class _LogsPageState extends State<LogsPage> {
                 Text(log.time, style: const TextStyle(color: Colors.white54, fontSize: 12, fontFamily: 'Consolas')),
               ],
             ),
-            
-            // 如果是详细模式，展示下面两行
             if (_isDetailed) ...[
               const SizedBox(height: 3),
-              // 第二行：▼ 目标地址
               Row(
                 children: [
                   const Text('▼ ', style: TextStyle(color: Colors.white54, fontSize: 10)),
@@ -265,7 +232,6 @@ class _LogsPageState extends State<LogsPage> {
                 ],
               ),
               const SizedBox(height: 3),
-              // 第三行：RULE → 规则  PROXY → 节点
               RichText(
                 text: TextSpan(
                   style: const TextStyle(fontSize: 12, fontFamily: 'Consolas'),
@@ -286,12 +252,11 @@ class _LogsPageState extends State<LogsPage> {
     );
   }
 
-  // 呼出右键复制菜单
   void _showRightClickMenu(BuildContext context, Offset position, String rawMsg) {
     showMenu(
       context: context,
       position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx + 1, position.dy + 1),
-      color: const Color(0xFF2C2C36),
+      color: const Color(0xFF373542),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
       items: [
         PopupMenuItem(
@@ -300,7 +265,7 @@ class _LogsPageState extends State<LogsPage> {
           onTap: () {
             Clipboard.setData(ClipboardData(text: rawMsg));
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('已复制到剪贴板', style: TextStyle(color: Colors.white)), backgroundColor: Colors.green, duration: Duration(seconds: 1)),
+              const SnackBar(content: Text('已复制到剪贴板', style: TextStyle(color: Colors.white)), backgroundColor: Color(0xFF00AA00), duration: Duration(seconds: 1)),
             );
           },
         ),
@@ -309,7 +274,6 @@ class _LogsPageState extends State<LogsPage> {
   }
 }
 
-// ---- CFW 风格的连体切换按钮组件 ----
 class _SegmentedButton extends StatelessWidget {
   final String leftText;
   final String rightText;
@@ -325,8 +289,9 @@ class _SegmentedButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const activeColor = Color(0xFF1396B2); // CFW 经典的青蓝色
-    const inactiveColor = Color(0xFF383842); // 深灰背景
+    // 修改：连体按钮颜色微调以适应新背景
+    const activeColor = Color(0xFF50505E); 
+    const inactiveColor = Color(0xFF373542); 
     
     return Container(
       height: 24,
@@ -337,7 +302,6 @@ class _SegmentedButton extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // 左侧按钮
           GestureDetector(
             onTap: () => onChanged(false),
             child: Container(
@@ -350,7 +314,6 @@ class _SegmentedButton extends StatelessWidget {
               child: Text(leftText, style: TextStyle(color: !isRightSelected ? Colors.white : Colors.white70, fontSize: 12)),
             ),
           ),
-          // 右侧按钮
           GestureDetector(
             onTap: () => onChanged(true),
             child: Container(

@@ -50,13 +50,12 @@ void main(List<String> args) async {
     }
   } catch (_) {}
 
-  // 核心修复：完全手动控制窗口，不用 waitUntilReadyToShow
-  // 先隐藏，设好所有参数，等第一帧渲染完再 show，彻底消除闪烁和跳变
   try {
     await windowManager.hide();
     await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
     await windowManager.setMinimumSize(const Size(700, 500));
-    await windowManager.setBackgroundColor(const Color(0xFF282832));
+    // Scaffold 背景色统一改为右侧底色 #2C2A38
+    await windowManager.setBackgroundColor(const Color(0xFF2C2A38));
     if (savedW != null && savedH != null) {
       await windowManager.setSize(Size(savedW, savedH));
     } else {
@@ -82,13 +81,12 @@ class CFWFlutterApp extends StatelessWidget {
       themeMode: ThemeMode.dark,
       darkTheme: ThemeData(
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF282832),
-        // 主字体依然是雅黑，负责正常的中文和英文
+        // Scaffold 背景色统一改为右侧底色 #2C2A38
+        scaffoldBackgroundColor: const Color(0xFF2C2A38),
         fontFamily: 'Microsoft YaHei',
-        // 遇到特殊 Emoji（如国旗），按顺序回退寻找
         fontFamilyFallback: const [
-          'TwemojiMozilla', // 第一顺位：使用你导入的完整版 Emoji
-          'Segoe UI Emoji', // 第二顺位：Windows 系统默认 Emoji 兜底
+          'TwemojiMozilla',
+          'Segoe UI Emoji',
         ],
       ),
       home: const MainLayout(),
@@ -115,7 +113,6 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
     windowManager.setPreventClose(true);
     _initTray();
 
-    // 第一帧渲染完毕后，显示窗口并启动内核
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
         await windowManager.show();
@@ -191,12 +188,15 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
 
   Widget _buildSidebar() => Container(
     width: 180,
-    color: const Color(0xFF22222B),
+    // 左侧背景色统一改为 #42424E
+    color: const Color(0xFF42424E),
     child: Column(
       children: [
+        // 第一象限：网速区 (背景色 #42424E)
         Container(
-          padding: const EdgeInsets.symmetric(vertical: 20),
+          height: 75,
           alignment: Alignment.center,
+          // 移除这里单独的底边线，改由主体结构统一绘制
           child: ValueListenableBuilder<String>(
             valueListenable: _manager.upSpeed,
             builder: (context, up, _) {
@@ -218,7 +218,7 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
                           ),
                         ],
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 8),
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -238,16 +238,26 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
             },
           ),
         ),
-        _buildNavItem('主页', 0),
-        _buildNavItem('代理', 1),
-        _buildNavItem('配置', 2),
-        _buildNavItem('日志', 3),
-        _buildNavItem('设置', 4),
-        const Spacer(),
-        Container(
-          height: 80,
-          alignment: Alignment.center,
-          child: const Text('01 : 21 : 27\n● 已连接', textAlign: TextAlign.center, style: TextStyle(color: Colors.green)),
+        // 核心微调：在这里绘制贯穿左侧的 1px 灰色分割线
+        Container(height: 1, color: Colors.white10),
+        // 第三象限：侧边菜单区 (背景色 #42424E)
+        Expanded(
+          child: Column(
+            children: [
+              const SizedBox(height: 10),
+              _buildNavItem('主页', 0),
+              _buildNavItem('代理', 1),
+              _buildNavItem('配置', 2),
+              _buildNavItem('日志', 3),
+              _buildNavItem('设置', 4),
+              const Spacer(),
+              Container(
+                height: 80,
+                alignment: Alignment.center,
+                child: const Text('01 : 21 : 27\n● 已连接', textAlign: TextAlign.center, style: TextStyle(color: Colors.green)),
+              ),
+            ],
+          ),
         ),
       ],
     ),
@@ -261,7 +271,8 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
         height: 45,
         margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF454555) : Colors.transparent,
+          // 选中项颜色微调以适应新背景
+          color: isSelected ? const Color(0xFF50505E) : Colors.transparent,
           borderRadius: BorderRadius.circular(6),
         ),
         alignment: Alignment.center,
@@ -273,19 +284,19 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
     );
   }
 
+  // 修改：框叉顶栏颜色 #343442
   Widget _buildTitleBar() {
     return GestureDetector(
       onPanStart: (_) => windowManager.startDragging(),
       child: Container(
-        height: 40,
-        alignment: Alignment.centerRight,
-        color: Colors.transparent,
+        height: 36,
+        color: const Color(0xFF343442),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.end,
           children: [
-            IconButton(icon: const Icon(Icons.minimize, size: 16), onPressed: () => windowManager.minimize()),
-            IconButton(icon: const Icon(Icons.crop_square, size: 16), onPressed: () => windowManager.maximize()),
-            IconButton(icon: const Icon(Icons.close, size: 16), hoverColor: Colors.red, onPressed: () => windowManager.close()),
+            IconButton(icon: const Icon(Icons.minimize, size: 16, color: Colors.white70), onPressed: () => windowManager.minimize(), splashRadius: 16),
+            IconButton(icon: const Icon(Icons.crop_square, size: 16, color: Colors.white70), onPressed: () => windowManager.maximize(), splashRadius: 16),
+            IconButton(icon: const Icon(Icons.close, size: 16, color: Colors.white70), hoverColor: Colors.red, onPressed: () => windowManager.close(), splashRadius: 16),
           ],
         ),
       ),
@@ -295,13 +306,13 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Row(
+      body: Column(
         children: [
-          _buildSidebar(),
+          _buildTitleBar(),
           Expanded(
-            child: Column(
+            child: Row(
               children: [
-                _buildTitleBar(),
+                _buildSidebar(),
                 Expanded(
                   child: IndexedStack(
                     index: _selectedIndex,
@@ -319,6 +330,42 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
           ),
         ],
       ),
+    );
+  }
+}
+
+// ==========================================
+// 统一的右侧布局引擎
+// ==========================================
+class SubPageLayout extends StatelessWidget {
+  final Widget? header;
+  final Widget content;
+
+  const SubPageLayout({super.key, this.header, required this.content});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 第二象限 (Top-Right)：背景色 #2C2A38
+        Container(
+          height: 75,
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          color: const Color(0xFF2C2A38),
+          alignment: Alignment.centerLeft,
+          child: header ?? const SizedBox.shrink(),
+        ),
+        // 核心微调：在这里绘制贯穿右侧的 1px 灰色分割线，与左侧连成一线
+        Container(height: 1, color: Colors.white10),
+        // 第四象限 (Bottom-Right)：背景色 #2C2A38
+        Expanded(
+          child: Container(
+            color: const Color(0xFF2C2A38),
+            child: content,
+          ),
+        ),
+      ],
     );
   }
 }
