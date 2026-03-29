@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -52,10 +53,11 @@ void main(List<String> args) async {
 
   try {
     await windowManager.hide();
+    await windowManager.setAsFrameless();
+    await windowManager.setHasShadow(false);
     await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
     await windowManager.setMinimumSize(const Size(700, 500));
-    // Scaffold 背景色统一改为右侧底色 #2C2A38
-    await windowManager.setBackgroundColor(const Color(0xFF2C2A38));
+    await windowManager.setBackgroundColor(Colors.transparent);
     if (savedW != null && savedH != null) {
       await windowManager.setSize(Size(savedW, savedH));
     } else {
@@ -81,7 +83,6 @@ class CFWFlutterApp extends StatelessWidget {
       themeMode: ThemeMode.dark,
       darkTheme: ThemeData(
         brightness: Brightness.dark,
-        // Scaffold 背景色统一改为右侧底色 #2C2A38
         scaffoldBackgroundColor: const Color(0xFF2C2A38),
         fontFamily: 'Microsoft YaHei',
         fontFamilyFallback: const [
@@ -105,6 +106,12 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
   int _selectedIndex = 0;
   final MihomoManager _manager = MihomoManager();
 
+  bool _isPinned = false; 
+  bool _isConnected = true; 
+  DateTime? _connectedTime; 
+  Timer? _uptimeTimer; 
+  String _uptimeStr = '00 : 00 : 00';
+
   @override
   void initState() {
     super.initState();
@@ -112,6 +119,17 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
     trayManager.addListener(this);
     windowManager.setPreventClose(true);
     _initTray();
+
+    _connectedTime = DateTime.now();
+    _uptimeTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_connectedTime != null && _isConnected) {
+        final diff = DateTime.now().difference(_connectedTime!);
+        final h = diff.inHours.toString().padLeft(2, '0');
+        final m = (diff.inMinutes % 60).toString().padLeft(2, '0');
+        final s = (diff.inSeconds % 60).toString().padLeft(2, '0');
+        setState(() => _uptimeStr = '$h : $m : $s');
+      }
+    });
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
@@ -124,6 +142,7 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
 
   @override
   void dispose() {
+    _uptimeTimer?.cancel();
     windowManager.removeListener(this);
     trayManager.removeListener(this);
     trayManager.destroy();
@@ -186,17 +205,69 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
     }
   }
 
+  Widget _buildSpeedRow(IconData icon, String speedStr) {
+    final match = RegExp(r'^([\d\.]+)\s*(.*)$').firstMatch(speedStr.trim());
+    String val = '0';
+    String unit = 'B/s';
+    if (match != null) {
+      val = match.group(1) ?? '0';
+      unit = match.group(2) ?? 'B/s';
+      if (unit.isEmpty) unit = 'B/s';
+    } else {
+      val = speedStr;
+    }
+
+    return SizedBox(
+      width: 120, 
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 24, 
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Icon(icon, color: Colors.white, size: 12) 
+            )
+          ),
+          Expanded(
+            child: Text(
+              val, 
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white, 
+                fontSize: 14, 
+                fontWeight: FontWeight.bold, 
+                fontFamily: 'Consolas'
+              )
+            ),
+          ),
+          SizedBox(
+            width: 34, 
+            child: Align(
+              alignment: Alignment.centerRight, 
+              child: Text(
+                unit, 
+                textAlign: TextAlign.right, 
+                style: const TextStyle(
+                  color: Colors.white, 
+                  fontSize: 11 
+                )
+              )
+            )
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSidebar() => Container(
-    width: 180,
-    // 左侧背景色统一改为 #42424E
+    width: 172,
     color: const Color(0xFF42424E),
     child: Column(
       children: [
-        // 第一象限：网速区 (背景色 #42424E)
         Container(
-          height: 75,
+          height: 77,
           alignment: Alignment.center,
-          // 移除这里单独的底边线，改由主体结构统一绘制
           child: ValueListenableBuilder<String>(
             valueListenable: _manager.upSpeed,
             builder: (context, up, _) {
@@ -206,31 +277,9 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
                   return Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.arrow_upward, color: Colors.greenAccent, size: 16),
-                          const SizedBox(width: 8),
-                          SizedBox(
-                            width: 80,
-                            child: Text(up, maxLines: 1, overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.bold)),
-                          ),
-                        ],
-                      ),
+                      _buildSpeedRow(Icons.arrow_upward, up),
                       const SizedBox(height: 8),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.arrow_downward, color: Colors.blueAccent, size: 16),
-                          const SizedBox(width: 8),
-                          SizedBox(
-                            width: 80,
-                            child: Text(down, maxLines: 1, overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(color: Colors.blueAccent, fontSize: 13, fontWeight: FontWeight.bold)),
-                          ),
-                        ],
-                      ),
+                      _buildSpeedRow(Icons.arrow_downward, down),
                     ],
                   );
                 },
@@ -238,13 +287,11 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
             },
           ),
         ),
-        // 核心微调：在这里绘制贯穿左侧的 1px 灰色分割线
         Container(height: 1, color: Colors.white10),
-        // 第三象限：侧边菜单区 (背景色 #42424E)
         Expanded(
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch, 
             children: [
-              const SizedBox(height: 10),
               _buildNavItem('主页', 0),
               _buildNavItem('代理', 1),
               _buildNavItem('配置', 2),
@@ -254,7 +301,34 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
               Container(
                 height: 80,
                 alignment: Alignment.center,
-                child: const Text('01 : 21 : 27\n● 已连接', textAlign: TextAlign.center, style: TextStyle(color: Colors.green)),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      _uptimeStr,
+                      style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'Consolas'),
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _isConnected ? const Color(0xFF00AA00) : const Color(0xFF92484E),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _isConnected ? '已连接' : '未连接',
+                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -268,35 +342,62 @@ class _MainLayoutState extends State<MainLayout> with WindowListener, TrayListen
     return InkWell(
       onTap: () => setState(() => _selectedIndex = index),
       child: Container(
-        height: 45,
-        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        height: 54, 
         decoration: BoxDecoration(
-          // 选中项颜色微调以适应新背景
-          color: isSelected ? const Color(0xFF50505E) : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
+          color: isSelected ? const Color(0xFF2C2A38) : Colors.transparent,
         ),
         alignment: Alignment.center,
-        child: Text(title,
-            style: TextStyle(
-                color: isSelected ? Colors.white : Colors.white60,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+        child: Text(
+          title,
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.white60,
+            fontSize: 16,
+            // 核心修复：移除加粗，保持选中和未选中样式一致
+          )
+        ),
       ),
     );
   }
 
-  // 修改：框叉顶栏颜色 #343442
+  Widget _buildWindowBtn(IconData icon, VoidCallback onTap, {bool isClose = false, bool isActive = false}) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        hoverColor: isClose ? const Color(0xFFE81123) : Colors.white24,
+        child: SizedBox(
+          width: 44, 
+          height: 24, 
+          child: Icon(
+            icon, 
+            size: 14, 
+            color: isActive ? Colors.white : Colors.white70 
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildTitleBar() {
     return GestureDetector(
       onPanStart: (_) => windowManager.startDragging(),
       child: Container(
-        height: 36,
+        height: 24,
         color: const Color(0xFF343442),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
-            IconButton(icon: const Icon(Icons.minimize, size: 16, color: Colors.white70), onPressed: () => windowManager.minimize(), splashRadius: 16),
-            IconButton(icon: const Icon(Icons.crop_square, size: 16, color: Colors.white70), onPressed: () => windowManager.maximize(), splashRadius: 16),
-            IconButton(icon: const Icon(Icons.close, size: 16, color: Colors.white70), hoverColor: Colors.red, onPressed: () => windowManager.close(), splashRadius: 16),
+            _buildWindowBtn(
+              _isPinned ? Icons.push_pin : Icons.push_pin_outlined, 
+              () async {
+                setState(() => _isPinned = !_isPinned);
+                await windowManager.setAlwaysOnTop(_isPinned);
+              }, 
+              isActive: _isPinned
+            ),
+            _buildWindowBtn(Icons.minimize, () => windowManager.minimize()),
+            _buildWindowBtn(Icons.crop_square, () => windowManager.maximize()),
+            _buildWindowBtn(Icons.close, () => windowManager.close(), isClose: true),
           ],
         ),
       ),
@@ -348,17 +449,14 @@ class SubPageLayout extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 第二象限 (Top-Right)：背景色 #2C2A38
         Container(
-          height: 75,
+          height: 77, 
           padding: const EdgeInsets.symmetric(horizontal: 20),
           color: const Color(0xFF2C2A38),
           alignment: Alignment.centerLeft,
           child: header ?? const SizedBox.shrink(),
         ),
-        // 核心微调：在这里绘制贯穿右侧的 1px 灰色分割线，与左侧连成一线
         Container(height: 1, color: Colors.white10),
-        // 第四象限 (Bottom-Right)：背景色 #2C2A38
         Expanded(
           child: Container(
             color: const Color(0xFF2C2A38),

@@ -167,7 +167,6 @@ class _ProfilesPageState extends State<ProfilesPage> {
             maxLines: null,
             expands: true,
             style: const TextStyle(color: Colors.white70, fontFamily: 'Consolas', fontSize: 13),
-            // 修改：输入框背景色改为右侧底色 #2C2A38，形成对比
             decoration: const InputDecoration(filled: true, fillColor: Color(0xFF2C2A38), border: InputBorder.none),
           ),
         ),
@@ -254,7 +253,6 @@ class _ProfilesPageState extends State<ProfilesPage> {
           style: const TextStyle(color: Colors.white, fontSize: 13),
           decoration: const InputDecoration(
             filled: true,
-            // 修改：输入框背景色改为右侧底色 #2C2A38
             fillColor: Color(0xFF2C2A38),
             border: OutlineInputBorder(borderSide: BorderSide.none),
             contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
@@ -298,7 +296,6 @@ class _ProfilesPageState extends State<ProfilesPage> {
     bool hasTraffic = total != null && total > 0;
     double used = (up ?? 0) + (down ?? 0);
     double ratio = hasTraffic ? (used / total).clamp(0.0, 1.0) : 0;
-    // 修改：流量条绿色 #00AA00，红色 #92484E
     Color barColor = ratio > 0.9 ? const Color(0xFF92484E) : (ratio > 0.7 ? Colors.orangeAccent : const Color(0xFF00AA00));
 
     return GestureDetector(
@@ -311,21 +308,15 @@ class _ProfilesPageState extends State<ProfilesPage> {
             width: 4,
             height: 66,
             child: Stack(
+              fit: StackFit.expand,
               children: [
                 Container(
-                  width: 4,
-                  height: 66,
                   decoration: BoxDecoration(
-                    // 修改：指示器凹槽颜色微调
-                    color: const Color(0xFF2C2A38),
+                    color: const Color(0xFF454555),
                     borderRadius: BorderRadius.circular(4),
                   ),
                 ),
-                SizedBox(
-                  width: 4,
-                  height: 66,
-                  child: _CfwIndicator(isActive: isActive, isSwitching: isSwitching),
-                ),
+                _CfwIndicator(isActive: isActive, isSwitching: isSwitching),
               ],
             ),
           ),
@@ -335,7 +326,6 @@ class _ProfilesPageState extends State<ProfilesPage> {
               height: 72,
               constraints: const BoxConstraints(minWidth: 293), 
               decoration: BoxDecoration(
-                // 修改：配置项颜色 #373542
                 color: const Color(0xFF373542), 
                 borderRadius: BorderRadius.circular(4),
               ),
@@ -343,66 +333,68 @@ class _ProfilesPageState extends State<ProfilesPage> {
                 borderRadius: BorderRadius.circular(4),
                 child: Stack(
                   children: [
-                    Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: () => _handleSwitch(file),
-                        child: Padding(
-                          padding: const EdgeInsets.only(left: 14, right: 40),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text(
-                                name, 
-                                maxLines: 1, 
-                                overflow: TextOverflow.ellipsis, 
-                                style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.1, fontWeight: FontWeight.w500)
-                              ),
-                              const SizedBox(height: 4), 
-                              Text(
-                                '$host ($timeStr)', 
-                                maxLines: 1, 
-                                overflow: TextOverflow.ellipsis, 
-                                style: const TextStyle(color: Colors.white54, fontSize: 12, height: 1.1)
-                              ),
-                              if (hasTraffic) ...[
-                                const SizedBox(height: 6),
-                                IntrinsicWidth(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                                    children: [
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Text(
-                                            '${_formatBytes(used)}  ${_formatBytes(total!)}', 
-                                            style: const TextStyle(color: Colors.white54, fontSize: 11, height: 1.1)
-                                          ),
-                                          const SizedBox(width: 12), 
-                                          if (expire != null)
+                    // 核心修复：利用 Positioned.fill 强制让高亮区域铺满整个卡片
+                    Positioned.fill(
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () => _handleSwitch(file),
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 14, right: 40),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  name, 
+                                  maxLines: 1, 
+                                  overflow: TextOverflow.ellipsis, 
+                                  style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.1, fontWeight: FontWeight.w500)
+                                ),
+                                const SizedBox(height: 4), 
+                                Text(
+                                  '$host ($timeStr)', 
+                                  maxLines: 1, 
+                                  overflow: TextOverflow.ellipsis, 
+                                  style: const TextStyle(color: Colors.white54, fontSize: 12, height: 1.1)
+                                ),
+                                if (hasTraffic) ...[
+                                  const SizedBox(height: 6),
+                                  IntrinsicWidth(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                                      children: [
+                                        Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
                                             Text(
-                                              _formatDate(expire), 
+                                              '${_formatBytes(used)}  ${_formatBytes(total!)}', 
                                               style: const TextStyle(color: Colors.white54, fontSize: 11, height: 1.1)
                                             ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 3), 
-                                      Container(
-                                        height: 2.0, 
-                                        alignment: Alignment.centerLeft,
-                                        // 修改：流量条凹槽颜色微调
-                                        color: const Color(0xFF2C2A38), 
-                                        child: FractionallySizedBox(
-                                          widthFactor: ratio, 
-                                          child: Container(color: barColor) 
+                                            const SizedBox(width: 12), 
+                                            if (expire != null)
+                                              Text(
+                                                _formatDate(expire), 
+                                                style: const TextStyle(color: Colors.white54, fontSize: 11, height: 1.1)
+                                              ),
+                                          ],
                                         ),
-                                      ),
-                                    ],
+                                        const SizedBox(height: 3), 
+                                        Container(
+                                          height: 2.0, 
+                                          alignment: Alignment.centerLeft,
+                                          color: const Color(0xFF2C2A38), 
+                                          child: FractionallySizedBox(
+                                            widthFactor: ratio, 
+                                            child: Container(color: barColor) 
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                              ]
-                            ],
+                                ]
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -461,7 +453,6 @@ class _ProfilesPageState extends State<ProfilesPage> {
             child: Container(
               height: 42,
               decoration: BoxDecoration(
-                // 修改：输入框背景色改为 #373542
                 color: const Color(0xFF373542),
                 borderRadius: BorderRadius.circular(4),
                 border: Border.all(color: Colors.white12, width: 1),
@@ -638,7 +629,6 @@ class _CfwIndicatorState extends State<_CfwIndicator> with SingleTickerProviderS
                 heightFactor: safeFraction,
                 child: Container(
                   decoration: BoxDecoration(
-                    // 修改：指示器条绿色 #00AA00
                     color: const Color(0xFF00AA00), 
                     borderRadius: BorderRadius.circular(4), 
                   ),
