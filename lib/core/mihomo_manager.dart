@@ -8,7 +8,6 @@ import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import 'system_tool_manager.dart';
 
-/// 简化并净化后的 Mihomo 管理器 - 纯逻辑层，无 UI 依赖
 class LogItem {
   final String time;
   final String type;
@@ -27,23 +26,17 @@ class MihomoManager {
   static final MihomoManager _instance = MihomoManager._internal();
   factory MihomoManager() => _instance;
 
-  // Networking & process
   late final Dio _dio;
   Process? _mihomoProcess;
   WebSocket? _logSocket;
   WebSocket? _trafficSocket;
 
-  // 核心修复：坚固的本地测速缓存，防止被内核空数据覆盖
   final Map<String, int> proxyDelaysCache = {};
-  // 核心修复：自动测速会话锁，防并发堵塞
   int _speedTestSessionId = 0;
 
-  // 正在切换的配置文件路径 (用于 UI 动画显示)
   final ValueNotifier<String> switchingProfilePath = ValueNotifier<String>('');
-  // 代理组折叠触发器 (用于 Sliver 架构极速重绘)
   final ValueNotifier<int> collapseTrigger = ValueNotifier<int>(0);
 
-  // 状态通知器（UI 层通过 ValueListenableBuilder 订阅）
   final ValueNotifier<bool> isLoadingProxies = ValueNotifier<bool>(false);
   final ValueNotifier<List<String>> groupNames = ValueNotifier<List<String>>(<String>[]);
   final ValueNotifier<Map<String, dynamic>> proxiesData = ValueNotifier<Map<String, dynamic>>(<String, dynamic>{});
@@ -56,41 +49,32 @@ class MihomoManager {
     'log-level': 'info',
     'mode': 'rule',
   });
-  // 混合配置状态（可由 UI 弹窗编辑并持久化）
+  
   final ValueNotifier<bool> isMixinEnabled = ValueNotifier<bool>(false);
   final ValueNotifier<String> mixinText = ValueNotifier<String>('');
-  // 高级 TUN 配置（仅本地持久化，以便 UI 可编辑/保存）
   final ValueNotifier<Map<String, dynamic>> tunAdvanced = ValueNotifier<Map<String, dynamic>>(<String, dynamic>{});
-  // 系统代理状态持久化（UI 可订阅）
   final ValueNotifier<bool> isSystemProxyEnabled = ValueNotifier<bool>(false);
-  // 开机自启状态（Windows）
   final ValueNotifier<bool> isAutoStartEnabled = ValueNotifier<bool>(false);
-  // 防火墙状态（是否允许 mihomo.exe 通过防火墙）
   final ValueNotifier<bool> isFirewallAllowed = ValueNotifier<bool>(false);
   final ValueNotifier<bool> isFirewallLoading = ValueNotifier<bool>(false);
-  // 服务模式状态（是否以任务计划方式运行）
   final ValueNotifier<bool> isServiceModeEnabled = ValueNotifier<bool>(false);
   
-  // 记录代理组的折叠状态 (true 为折叠，false 为展开)
   final Map<String, ValueNotifier<bool>> groupCollapseStates = {};
 
   ValueNotifier<bool> getGroupCollapseState(String groupName) {
     if (!groupCollapseStates.containsKey(groupName)) {
-      groupCollapseStates[groupName] = ValueNotifier<bool>(false); // 默认不折叠
+      groupCollapseStates[groupName] = ValueNotifier<bool>(false); 
     }
     return groupCollapseStates[groupName]!;
   }
   
-  // 配置文件列表状态
   final ValueNotifier<List<File>> profiles = ValueNotifier<List<File>>([]);
   final ValueNotifier<String> activeProfilePath = ValueNotifier<String>('');
   
-  // 外部下载请求使用的独立 Dio，伪装 User-Agent 强迫机场下发 YAML 配置
   final Dio _extDio = Dio(BaseOptions(
     headers: {'User-Agent': 'ClashforWindows/0.20.39'}
   ));
 
-  // 网速状态
   final ValueNotifier<String> upSpeed = ValueNotifier<String>('0 B/s');
   final ValueNotifier<String> downSpeed = ValueNotifier<String>('0 B/s');
 
@@ -105,7 +89,7 @@ class MihomoManager {
 
   Future<void> _ensureCoreResources() async {
     final List<String> resourceFiles = ['geoip.metadb', 'geosite.dat', 'Country.mmdb'];
-    final exeDir = Directory.current.path; // 程序运行目录
+    final exeDir = Directory.current.path;
 
     for (var fileName in resourceFiles) {
       final targetFile = File('$_homeDir\\$fileName');
@@ -123,6 +107,31 @@ class MihomoManager {
           debugPrint('⚠️ [资源警告] 未能找到基础资源 $fileName，内核可能尝试自行下载。');
         }
       }
+    }
+  }
+
+  // 核心功能：解析进程原生的控制台输出（stdout），将其转化为日志对象存入 UI
+  void _parseProcessLog(String data, {bool isError = false}) {
+    final lines = data.split('\n');
+    for (var line in lines) {
+      if (line.trim().isEmpty) continue;
+      
+      String type = isError ? 'error' : 'info';
+      String msg = line.trim();
+
+      // 尝试匹配内核标准日志格式：level=info msg="Start initial..."
+      final levelMatch = RegExp(r'level=(info|warning|error|debug|fatal)').firstMatch(line);
+      if (levelMatch != null) type = levelMatch.group(1)!;
+
+      final msgMatch = RegExp(r'msg="([^"]+)"').firstMatch(line);
+      if (msgMatch != null) {
+        msg = msgMatch.group(1)!;
+      } else {
+        // 如果没引号，强行去头部的干扰信息
+        msg = line.replaceAll(RegExp(r'time="[^"]+"\s+level=[^\s]+\s+'), '').trim();
+      }
+
+      parseLog(type, msg);
     }
   }
 
@@ -178,7 +187,7 @@ rules:
       }
 
       final random = Random();
-      final apiPort = 50000 + random.nextInt(9000); // 50000 - 58999
+      final apiPort = 50000 + random.nextInt(9000); 
       final apiSecret = List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
 
       _dio.options.baseUrl = 'http://127.0.0.1:$apiPort';
@@ -195,13 +204,20 @@ rules:
 
       _mihomoProcess = await Process.start(exe, safeArgs, runInShell: false);
 
+      // 核心修复：在这里把原生的 stdout/stderr 输出重定向到 _parseProcessLog 方法，展示到页面里！
       try {
-        _mihomoProcess!.stdout.transform(utf8.decoder).listen((data) => debugPrint('🟢 [内核] ${data.trim()}'));
+        _mihomoProcess!.stdout.transform(utf8.decoder).listen((data) {
+          debugPrint('🟢 [内核] ${data.trim()}');
+          _parseProcessLog(data);
+        });
       } catch (e) {
         debugPrint('🟢 [内核] stdout 监听失败: $e');
       }
       try {
-        _mihomoProcess!.stderr.transform(utf8.decoder).listen((data) => debugPrint('🔴 [内核报错] ${data.trim()}'));
+        _mihomoProcess!.stderr.transform(utf8.decoder).listen((data) {
+          debugPrint('🔴 [内核报错] ${data.trim()}');
+          _parseProcessLog(data, isError: true);
+        });
       } catch (e) {
         debugPrint('🔴 [内核报错] stderr 监听失败: $e');
       }
@@ -209,14 +225,14 @@ rules:
         debugPrint('❌ 内核进程已意外退出！ exitCode: $code');
       });
 
-      for (int i = 0; i < 50; i++) { // 最多等 5 秒
+      for (int i = 0; i < 50; i++) { 
         try {
           await Future.delayed(const Duration(milliseconds: 100));
           final res = await _dio.get('/version');
           if (res.statusCode == 200) {
             debugPrint('🟢 [内核] 启动就绪，耗时: ${i * 100} ms');
-            await _loadLocalSettings(); // 先将本地记忆注入内核
-            await syncConfig();         // 再同步一次状态给 UI
+            await _loadLocalSettings(); 
+            await syncConfig();         
             await fetchVersion();
             await fetchProxies();
             
@@ -225,10 +241,9 @@ rules:
               if (activeProfilePath.value.isNotEmpty && activeProfilePath.value != _runningConfigPath) {
                 final activeFile = File(activeProfilePath.value);
                 if (await activeFile.exists()) {
-                  debugPrint('🔄 [配置管理] 启动恢复: 正在应用上次记忆的配置');
-                  await _dio.put('/configs', queryParameters: {'force': 'false'}, data: {'path': activeFile.absolute.path});
-                  await syncConfig();
-                  await fetchProxies();
+                  debugPrint('🔄 [配置管理] 启动恢复: 正在合成并应用上次记忆的配置');
+                  // 核心修复：复用 switchProfile 的合成逻辑，而不是直接 PUT 原始文件导致端口抢占
+                  await switchProfile(activeFile);
                 } else {
                   activeProfilePath.value = _runningConfigPath;
                   await _saveLocalSettings();
@@ -244,7 +259,6 @@ rules:
               debugPrint('📡 [流量] 连接失败: $e');
             }
             
-            // 核心功能：应用冷启动完毕，自动测速激活配置
             runGlobalSpeedTest();
             break;
           }
@@ -256,7 +270,7 @@ rules:
   }
 
   Future<void> dispose() async {
-    _speedTestSessionId++; // 中断所有测速
+    _speedTestSessionId++; 
     try {
       if (isSystemProxyEnabled.value) {
         try {
@@ -561,9 +575,7 @@ rules:
     debugPrint('📂 [配置管理] 尝试切换配置: ${file.path}');
     final absolutePath = file.absolute.path;
     
-    // 清除上一个配置的本地测速缓存
     proxyDelaysCache.clear();
-    // 递增会话，打断上一轮任何还没跑完的测速
     _speedTestSessionId++;
 
     bool isCompleted = false;
@@ -574,12 +586,99 @@ rules:
     });
 
     try {
-      final currentPort = config.value['port'] ?? 7891;
+      final currentPort = config.value['mixed-port'] ?? config.value['port'] ?? 7891;
       final currentAllowLan = config.value['allow-lan'] ?? false;
       final currentMode = config.value['mode'] ?? 'rule';
+      final currentBind = config.value['bind-address'] ?? '*';
 
-      await _dio.put('/configs', queryParameters: {'force': 'true'}, data: {'path': absolutePath});
+      // ================= 核心修复：配置合成 =================
+      // 1. 读取原始 YAML 内容
+      String rawContent = await file.readAsString();
       
+      // 2. 剔除可能与 UI 冲突的顶层配置项 (使用正则精确匹配行首)
+      final keysToRemove = ['port', 'socks-port', 'mixed-port', 'redir-port', 'tproxy-port', 'allow-lan', 'bind-address', 'mode'];
+      for (var key in keysToRemove) {
+        rawContent = rawContent.replaceAll(RegExp('^$key\\s*:.*\\r?\\n?', multiLine: true), '');
+      }
+
+      // 3. 构建最高优先级的 UI 配置头部
+      String headerOverrides = '''
+mixed-port: $currentPort
+allow-lan: $currentAllowLan
+bind-address: "$currentBind"
+mode: $currentMode
+''';
+
+      // ================= 核心修复 4：极致安全的混合配置解析引擎 =================
+      String finalRawContent = rawContent;
+
+      if (isMixinEnabled.value && mixinText.value.trim().isNotEmpty) {
+        String mixinStr = mixinText.value;
+
+        // 1. 无脑彻底砍掉 "mixin: # object" 这种 CFW 专属的占位废话 (兼容 \r\n 和 \n)
+        mixinStr = mixinStr.replaceAll(RegExp(r'^mixin:.*$', multiLine: true), '');
+
+        List<String> mixinLines = mixinStr.split('\n');
+        List<String> customRuleLines = [];
+        List<String> otherMixinLines = [];
+        bool inRulesBlock = false;
+
+        for (String line in mixinLines) {
+          String trimmed = line.trim();
+          if (trimmed.isEmpty) continue; // 跳过空行
+
+          // 遇到 rules: 开启规则收集模式
+          if (trimmed == 'rules:') {
+            inRulesBlock = true;
+            continue;
+          }
+
+          // 判断是否跳出了 rules 块（如果不是以空格或 '-' 开头，且包含冒号，说明是新的顶层配置，比如 dns:）
+          if (inRulesBlock && !line.startsWith(' ') && !line.startsWith('\t') && !trimmed.startsWith('-') && trimmed.contains(':')) {
+            inRulesBlock = false;
+          }
+
+          if (inRulesBlock) {
+            customRuleLines.add(line); // 原封不动保留前面的空格缩进
+          } else {
+            otherMixinLines.add(line); // 把其他非 rules 的配置存起来
+          }
+        }
+
+        // 2. 将用户自定义的 rules 强行插队到原版 rules 节点的最前面
+        if (customRuleLines.isNotEmpty) {
+          String customRulesStr = customRuleLines.join('\n') + '\n';
+          
+          // 精准匹配原文件中的 rules: 行 (严格限制只匹配本行的空格，防止跨行匹配)
+          final rulesAnchor = RegExp(r'^rules:[ \t]*\r?\n', multiLine: true);
+          
+          if (finalRawContent.contains(rulesAnchor)) {
+            // 绝杀：直接把原来的 rules: 替换为 rules: 加上你的自定义规则
+            finalRawContent = finalRawContent.replaceFirst(
+              rulesAnchor,
+              'rules:\n' + customRulesStr
+            );
+          } else {
+            // 极端情况：原配置文件居然没有 rules？那就直接加在最后
+            finalRawContent += '\n\nrules:\n' + customRulesStr;
+          }
+        }
+
+        // 3. 将其余的混合配置 (如 dns:, tun: 等) 挂载到头部最高优先级
+        if (otherMixinLines.isNotEmpty) {
+          headerOverrides += '\n' + otherMixinLines.join('\n') + '\n';
+        }
+        
+        debugPrint('🧩 [配置合成] Mixin 混合配置已安全解析并注入！');
+      }
+      // ===============================================================
+
+      // 4. 【核心修复】：将合成后的内容写入专属的影子文件，绝对不碰 config.yaml 和原订阅文件！
+      final generatedFile = File('$_homeDir\\running_generated.yaml');
+      await generatedFile.writeAsString(headerOverrides + '\n' + finalRawContent);
+
+      // 5. 让内核加载这个动态生成的影子文件
+      await _dio.put('/configs', queryParameters: {'force': 'true'}, data: {'path': generatedFile.absolute.path});// 6. 二次 Patch 确保内存状态完全同步
       final overrideData = {
         'port': currentPort,
         'mixed-port': currentPort,
@@ -588,6 +687,7 @@ rules:
       };
       await _dio.patch('/configs', data: overrideData);
 
+      // UI 层面仍然认定当前激活的是原始文件
       activeProfilePath.value = absolutePath;
       await syncConfig(); 
       await fetchProxies();
@@ -597,7 +697,6 @@ rules:
       } catch (e) {}
       debugPrint('✅ [配置管理] 切换并覆写本地设置成功: $absolutePath');
 
-      // 核心功能：每次切换完毕，立即触发自动全局测速
       runGlobalSpeedTest();
 
     } on DioException catch (e) {
@@ -685,13 +784,10 @@ rules:
       List<String> groups = [];
       allProxies.forEach((key, value) {
         if (value is Map) {
-          // 核心修复：在这里优先将本地缓存的测速结果覆写进去，防止被内核空数据刷掉
           final history = value['history'] as List<dynamic>?;
           if (history != null && history.isNotEmpty) {
-            // 如果后端传来了真正的测速历史，同步更新本地缓存
             proxyDelaysCache[key] = history.last['delay'] ?? 0;
           } else if (proxyDelaysCache.containsKey(key)) {
-            // 如果后端返回空，说明没记录，强制从缓存恢复
             value['delay'] = proxyDelaysCache[key];
           }
 
@@ -1040,11 +1136,6 @@ rules:
     }
   }
 
-  // ==========================================
-  // 测速相关功能
-  // ==========================================
-
-  /// 测试单个节点延迟
   Future<void> testProxyDelay(String proxyName) async {
     final timeout = config.value['test_timeout'] ?? 3000;
     var url = config.value['test_url']?.toString() ?? '';
@@ -1062,7 +1153,6 @@ rules:
     }
   }
 
-  /// 依次测试代理组内所有节点（智能混合测速）
   Future<void> testGroupDelay(String groupName) async {
     final groupData = proxiesData.value[groupName];
     if (groupData == null) return;
@@ -1097,9 +1187,7 @@ rules:
     }
   }
 
-  /// 本地更新 proxiesData 的延迟数据以触发 UI 刷新，并更新缓存
   void _updateProxyDelayLocally(String proxyName, int delay) {
-    // 将测速结果锁入缓存
     proxyDelaysCache[proxyName] = delay;
     
     final currentData = Map<String, dynamic>.from(proxiesData.value);
@@ -1113,16 +1201,15 @@ rules:
       });
       
       proxyNode['history'] = history;
-      proxyNode['delay'] = delay; // 强制设置显式的 delay 属性
+      proxyNode['delay'] = delay; 
       currentData[proxyName] = proxyNode;
       proxiesData.value = currentData; 
     }
   }
 
-  /// 核心功能：全局并发节点自动测速，带有防连切防抖功能
   Future<void> runGlobalSpeedTest() async {
     final session = ++_speedTestSessionId;
-    await Future.delayed(const Duration(milliseconds: 500)); // 等待 UI 稳定和节点完全加载
+    await Future.delayed(const Duration(milliseconds: 500)); 
     if (_speedTestSessionId != session) return;
 
     final proxies = proxiesData.value;
@@ -1132,7 +1219,6 @@ rules:
     proxies.forEach((k, v) {
       if (v is Map) {
         final type = (v['type'] ?? '').toString();
-        // 排除策略组和内置代理点，只测真正的节点
         if (!['Selector', 'URLTest', 'Fallback', 'LoadBalance', 'Direct', 'Reject', 'Pass'].contains(type)) {
           if (k != 'GLOBAL' && k != 'DIRECT' && k != 'REJECT') {
             nodesToTest.add(k);
@@ -1142,7 +1228,7 @@ rules:
     });
 
     debugPrint('🚀 [自动测速] 启动全局并发测速，共 ${nodesToTest.length} 个节点 (Session: $session)');
-    const int concurrency = 10; // 并发数为 10
+    const int concurrency = 10; 
     for (int i = 0; i < nodesToTest.length; i += concurrency) {
       if (_speedTestSessionId != session) {
         debugPrint('🛑 [自动测速] 检测到配置切换，已终止当前测速循环 (Session: $session)');
@@ -1153,10 +1239,6 @@ rules:
     }
     debugPrint('✅ [自动测速] 全局测速完毕 (Session: $session)');
   }
-
-  // ==========================================
-  // 单个配置操作 (更新、删除)
-  // ==========================================
 
   Future<void> deleteProfile(File file) async {
     if (await file.exists()) {

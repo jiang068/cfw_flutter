@@ -13,17 +13,20 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  static const double _kFontSize = 15.0;
+  static const double _kFontSize = 17.0;
   @override
   Widget build(BuildContext context) {
     final manager = widget.manager;
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 10),
       children: [
+        // 核心修改 1：标题整体下移 12px
+        const SizedBox(height: 12),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.pets, size: 40, color: Colors.blueAccent),
+            // 核心修改 2：图标尺寸从 40 放大到 52
+            const Icon(Icons.pets, size: 52, color: Colors.blueAccent),
             const SizedBox(width: 15),
             const Text('Clash for Windows', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
           ],
@@ -118,13 +121,13 @@ class _HomePageState extends State<HomePage> {
                                       height: 32,
                                       child: Center(
                                         child: isLoading
-                                            ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                                            : IconButton(
-                                                padding: EdgeInsets.zero,
-                                                icon: Icon(isAllowed ? Icons.gpp_good : Icons.gpp_maybe, size: 18, color: isAllowed ? Colors.green : Colors.grey),
-                                                tooltip: isAllowed ? '移除防火墙规则' : '添加防火墙规则 (允许LAN)',
-                                                onPressed: () => manager.toggleFirewall(),
-                                              ),
+                                          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                                          : IconButton(
+                                              padding: EdgeInsets.zero,
+                                              icon: Icon(isAllowed ? Icons.gpp_good : Icons.gpp_maybe, size: 18, color: isAllowed ? Colors.green : Colors.grey),
+                                              tooltip: isAllowed ? '移除防火墙规则' : '添加防火墙规则 (允许LAN)',
+                                              onPressed: () => manager.toggleFirewall(),
+                                            ),
                                       ),
                                     );
                                   },
@@ -225,7 +228,11 @@ class _HomePageState extends State<HomePage> {
                               }
                             ),
                             const Spacer(),
-                            Text(version, style: const TextStyle(color: Colors.white54)),
+                            // 核心修改 3：加上 right padding，与其他带按钮的行右侧边缘对齐
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8.0),
+                              child: Text(version, style: const TextStyle(color: Colors.white54)),
+                            ),
                           ],
                         ),
                       ),
@@ -269,7 +276,6 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                 ),
-                // TAP 模式已彻底移除，以消除旧有性能和交互问题
                 ValueListenableBuilder<bool>(
                   valueListenable: manager.isServiceModeEnabled,
                   builder: (context, isService, _) {
@@ -747,4 +753,3 @@ class _HoverRowState extends State<_HoverRow> {
     );
   }
 }
-

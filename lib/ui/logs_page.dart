@@ -22,7 +22,7 @@ class _LogsPageState extends State<LogsPage> {
   @override
   void initState() {
     super.initState();
-    _localLogs = List.from(widget.manager.logs.value);
+    _localLogs = widget.manager.logs.value.take(50).toList();
     widget.manager.logs.addListener(_onLogsChanged);
 
     final currentLevel = widget.manager.config.value['log-level']?.toString().toLowerCase();
@@ -38,7 +38,7 @@ class _LogsPageState extends State<LogsPage> {
   void _onLogsChanged() {
     if (!_isPaused) {
       setState(() {
-        _localLogs = List.from(widget.manager.logs.value);
+        _localLogs = widget.manager.logs.value.take(50).toList();
       });
     }
   }
@@ -81,7 +81,6 @@ class _LogsPageState extends State<LogsPage> {
             child: Container(
               height: 36,
               decoration: BoxDecoration(
-                // 修改：输入框背景色改为 #373542
                 color: const Color(0xFF373542),
                 borderRadius: BorderRadius.circular(4),
                 border: Border.all(color: Colors.white12),
@@ -127,7 +126,6 @@ class _LogsPageState extends State<LogsPage> {
               ),
               const SizedBox(width: 15),
               Material(
-                // 修改：清除按钮颜色 #00AA00
                 color: const Color(0xFF00AA00),
                 borderRadius: BorderRadius.circular(4),
                 child: InkWell(
@@ -151,15 +149,13 @@ class _LogsPageState extends State<LogsPage> {
                     setState(() {
                       _isPaused = !_isPaused;
                       if (!_isPaused) {
-                        _localLogs = List.from(widget.manager.logs.value);
+                        _localLogs = widget.manager.logs.value.take(50).toList();
                       }
                     });
                   },
                   borderRadius: BorderRadius.circular(4),
                   child: Container(
-                    width: 60,
-                    alignment: Alignment.center,
-                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     child: Text(_isPaused ? '开始' : '暂停', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
                   ),
                 ),
@@ -184,7 +180,6 @@ class _LogsPageState extends State<LogsPage> {
     bool isWarn = log.type == 'warn' || log.type == 'warning';
     
     String emoji = isError ? '❌' : (isWarn ? '⚠️' : '✅');
-    // 修改：日志颜色微调，错误使用 #92484E，正常使用 #00AA00
     Color msgColor = isError ? const Color(0xFF92484E) : (isWarn ? Colors.orangeAccent : const Color(0xFF00AA00));
 
     String dest = log.destination;
@@ -192,7 +187,14 @@ class _LogsPageState extends State<LogsPage> {
       final parts = log.msg.split('-->');
       if (parts.length > 1) dest = parts[1].trim();
     }
-    if (dest.isEmpty) dest = 'Unknown Destination';
+    
+    // 核心修正：判断是否为纯系统级别的日志（无路由、无代理、无目标）
+    bool isSystemLog = log.rule.isEmpty && log.proxy.isEmpty && dest.isEmpty;
+
+    // 如果不是系统日志，且没有提取到目标，才兜底显示 Unknown Destination
+    if (dest.isEmpty && !isSystemLog) {
+      dest = 'Unknown Destination';
+    }
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -209,19 +211,20 @@ class _LogsPageState extends State<LogsPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: RichText(
-                    text: TextSpan(
+                  child: Text.rich(
+                    TextSpan(
                       children: [
                         TextSpan(text: '$emoji ', style: const TextStyle(fontSize: 12)),
-                        TextSpan(text: log.msg, style: TextStyle(color: msgColor, fontSize: 13, fontFamily: 'Consolas')),
+                        TextSpan(text: log.msg, style: TextStyle(color: msgColor, fontSize: 13)),
                       ],
                     ),
                   ),
                 ),
-                Text(log.time, style: const TextStyle(color: Colors.white54, fontSize: 12, fontFamily: 'Consolas')),
+                Text(log.time, style: const TextStyle(color: Colors.white54, fontSize: 12)),
               ],
             ),
-            if (_isDetailed) ...[
+            // 核心修正：如果是系统日志，即使开启了 _isDetailed，也不渲染任何路由详情
+            if (_isDetailed && !isSystemLog) ...[
               const SizedBox(height: 3),
               Row(
                 children: [
@@ -232,9 +235,9 @@ class _LogsPageState extends State<LogsPage> {
                 ],
               ),
               const SizedBox(height: 3),
-              RichText(
-                text: TextSpan(
-                  style: const TextStyle(fontSize: 12, fontFamily: 'Consolas'),
+              Text.rich(
+                TextSpan(
+                  style: const TextStyle(fontSize: 12),
                   children: [
                     const TextSpan(text: 'RULE ', style: TextStyle(color: Colors.lightBlueAccent, fontWeight: FontWeight.bold)),
                     const TextSpan(text: '→ ', style: TextStyle(color: Colors.white54)),
@@ -289,8 +292,7 @@ class _SegmentedButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 修改：连体按钮颜色微调以适应新背景
-    const activeColor = Color(0xFF50505E); 
+    const activeColor = Color(0xFF2196F3); 
     const inactiveColor = Color(0xFF373542); 
     
     return Container(
